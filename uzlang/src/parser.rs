@@ -7,6 +7,7 @@ pub enum Expr {
     Identifier(String),
     BinaryOp(Box<Expr>, String, Box<Expr>),
     UnaryOp(String, Box<Expr>),
+    Call(String, Vec<Expr>),
     Input,
 }
 
@@ -16,6 +17,9 @@ pub enum Stmt {
     If(Expr, Vec<Stmt>),
     Loop(Expr, Vec<Stmt>),
     Assign(String, Expr),
+    Function(String, Vec<String>, Vec<Stmt>),
+    Return(Expr),
+    Expr(Expr),
 }
 
 pub struct Parser {
@@ -102,7 +106,6 @@ impl Parser {
             Token::Yoz => {
                 self.advance();
                 let expr = self.parse_expr()?;
-                // Expect newline after print?
                 Some(Stmt::Print(expr))
             }
             Token::Agar => {
@@ -117,6 +120,42 @@ impl Parser {
                 let body = self.parse_block()?;
                 Some(Stmt::Loop(condition, body))
             }
+            Token::Funksiya => {
+                self.advance();
+                if let Token::Identifier(name) = self.advance().clone() {
+                    if let Token::LParen = self.advance() {
+                        let mut params = Vec::new();
+                        if self.peek() != &Token::RParen {
+                            loop {
+                                if let Token::Identifier(param) = self.advance().clone() {
+                                    params.push(param);
+                                } else {
+                                    eprintln!("Xatolik: Parametr nomi kutilgan");
+                                    return None;
+                                }
+
+                                if self.peek() == &Token::Comma {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if let Token::RParen = self.advance() {
+                            let body = self.parse_block()?;
+                            return Some(Stmt::Function(name, params, body));
+                        }
+                    }
+                }
+                eprintln!("Xatolik: Funksiya deklaratsiyasi noto'g'ri");
+                None
+            }
+            Token::Qaytar => {
+                self.advance();
+                let expr = self.parse_expr()?;
+                Some(Stmt::Return(expr))
+            }
             Token::Identifier(name) => {
                 // Check if it is an assignment
                 match self.peek_next() {
@@ -126,6 +165,11 @@ impl Parser {
                         self.advance(); // consume =
                         let expr = self.parse_expr()?;
                         Some(Stmt::Assign(name, expr))
+                    }
+                    // Check if it is a function call statement
+                    Token::LParen => {
+                        let expr = self.parse_expr()?;
+                        Some(Stmt::Expr(expr))
                     }
                     _ => None,
                 }
@@ -216,6 +260,39 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Option<Expr> {
+        // Look ahead for function call
+        if let Token::Identifier(name) = self.peek() {
+            if self.peek_next() == &Token::LParen {
+                let name = name.clone();
+                self.advance(); // consume name
+                self.advance(); // consume (
+
+                let mut args = Vec::new();
+                if self.peek() != &Token::RParen {
+                     loop {
+                        if let Some(arg) = self.parse_expr() {
+                            args.push(arg);
+                        } else {
+                            break;
+                        }
+
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                if let Token::RParen = self.advance() {
+                    return Some(Expr::Call(name, args));
+                } else {
+                    eprintln!("Xatolik: ) kutilgan");
+                    return None;
+                }
+            }
+        }
+
         match self.advance() {
             Token::Number(n) => Some(Expr::Number(*n)),
             Token::StringLiteral(s) => Some(Expr::StringLiteral(s.clone())),
