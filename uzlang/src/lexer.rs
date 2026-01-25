@@ -5,11 +5,16 @@ pub enum Token {
     Yoz,  // yoz
     Takrorla, // takrorla
     Sora, // so'ra
+    Funksiya, // funksiya
+    Qaytar, // qaytar
     And,  // &&
     Or,   // ||
     Not,  // !
     LBrace, // {
     RBrace, // }
+    LParen, // (
+    RParen, // )
+    Comma,  // ,
     Identifier(String),
     Number(i64),
     StringLiteral(String),
@@ -67,6 +72,18 @@ impl Lexer {
                     tokens.push(Token::RBrace);
                     self.pos += 1;
                 }
+                '(' => {
+                    tokens.push(Token::LParen);
+                    self.pos += 1;
+                }
+                ')' => {
+                    tokens.push(Token::RParen);
+                    self.pos += 1;
+                }
+                ',' => {
+                    tokens.push(Token::Comma);
+                    self.pos += 1;
+                }
                 _ => {
                     // Unknown character, skip for now
                     self.pos += 1;
@@ -115,6 +132,8 @@ impl Lexer {
             "yoz" => Token::Yoz,
             "takrorla" => Token::Takrorla,
             "so'ra" => Token::Sora,
+            "funksiya" => Token::Funksiya,
+            "qaytar" => Token::Qaytar,
             _ => Token::Identifier(s),
         }
     }
@@ -211,6 +230,29 @@ mod tests {
             Token::Not,
             Token::Operator("==".to_string()),
             Token::And,
+            Token::EOF
+        ]);
+    }
+
+    #[test]
+    fn test_functions() {
+        let input = "funksiya qosh(a, b) { qaytar a + b }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        assert_eq!(tokens, vec![
+            Token::Funksiya,
+            Token::Identifier("qosh".to_string()),
+            Token::LParen,
+            Token::Identifier("a".to_string()),
+            Token::Comma,
+            Token::Identifier("b".to_string()),
+            Token::RParen,
+            Token::LBrace,
+            Token::Qaytar,
+            Token::Identifier("a".to_string()),
+            Token::Operator("+".to_string()),
+            Token::Identifier("b".to_string()),
+            Token::RBrace,
             Token::EOF
         ]);
     }
