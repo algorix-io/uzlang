@@ -1,8 +1,7 @@
-yoz "UzLang namuna dasturi"
-
-raqam = 1
-toki raqam < 6
-    yoz raqam
-    raqam = raqam + 1
-
+yoz "UzLang 2.0 Loop Test"
+a = 0
+takrorla a < 5 {
+    yoz a
+    a = a + 1
+}
 yoz "Tamom"

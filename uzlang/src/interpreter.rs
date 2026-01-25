@@ -51,8 +51,11 @@ impl Interpreter {
                     self.execute(body);
                 }
             }
-            Stmt::While(cond, body) => {
-                while self.is_truthy(self.evaluate(cond)) {
+            Stmt::Loop(cond, body) => {
+                while {
+                    let val = self.evaluate(cond);
+                    self.is_truthy(val)
+                } {
                     self.execute(body);
                 }
             }
@@ -86,7 +89,7 @@ impl Interpreter {
                 "+" => Value::Number(l + r),
                 "-" => Value::Number(l - r),
                 "*" => Value::Number(l * r),
-                "/" => if r != 0 { Value::Number(l / r) } else { Value::Number(0) },
+                "/" => Value::Number(l / r),
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 ">" => Value::Bool(l > r),

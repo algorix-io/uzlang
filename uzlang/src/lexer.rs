@@ -3,18 +3,13 @@ pub enum Token {
     Agar, // agar
     Toki, // toki (while)
     Yoz,  // yoz
+    Takrorla, // takrorla
+    LBrace, // {
+    RBrace, // }
     Identifier(String),
     Number(i64),
     StringLiteral(String),
-    Operator(String), // ==, >, <, etc.
-    Assign, // =
-    Plus,   // +
-    Minus,  // -
-    Star,   // *
-    Slash,  // /
-    Newline,
-    Indent,
-    Dedent,
+    Operator(String), // ==, >, <, +, -, *, / etc.
     EOF,
 }
 
@@ -52,33 +47,16 @@ impl Lexer {
                 'a'..='z' | 'A'..='Z' | '_' => {
                     tokens.push(self.read_identifier());
                 }
-                '+' => {
-                    tokens.push(Token::Plus);
-                    self.pos += 1;
-                }
-                '-' => {
-                    tokens.push(Token::Minus);
-                    self.pos += 1;
-                }
-                '*' => {
-                    tokens.push(Token::Star);
-                    self.pos += 1;
-                }
-                '/' => {
-                    tokens.push(Token::Slash);
-                    self.pos += 1;
-                }
-                '=' => {
-                    if self.peek_char() == '=' {
-                        tokens.push(Token::Operator("==".to_string()));
-                        self.pos += 2;
-                    } else {
-                        tokens.push(Token::Assign);
-                        self.pos += 1;
-                    }
-                }
-                '!' | '>' | '<' => {
+                '=' | '!' | '>' | '<' | '+' | '-' | '*' | '/' => {
                     tokens.push(self.read_operator());
+                }
+                '{' => {
+                    tokens.push(Token::LBrace);
+                    self.pos += 1;
+                }
+                '}' => {
+                    tokens.push(Token::RBrace);
+                    self.pos += 1;
                 }
                 _ => {
                     // Unknown character, skip for now
@@ -187,6 +165,7 @@ impl Lexer {
             "agar" => Token::Agar,
             "toki" => Token::Toki,
             "yoz" => Token::Yoz,
+            "takrorla" => Token::Takrorla,
             _ => Token::Identifier(s),
         }
     }
