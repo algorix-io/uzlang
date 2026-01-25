@@ -1,7 +1,33 @@
-yoz "UzLang 2.0 Loop Test"
-a = 0
-takrorla a < 5 {
-    yoz a
-    a = a + 1
+// UzLang 2.5: Muloqot va Mantiq testi
+
+yoz "Tizimga kirish."
+yoz "Ismingiz nima?"
+ism = so'ra
+
+yoz "Salom " + ism
+yoz "Parolni kiriting (maxfiy so'z: admin):"
+parol = so'ra
+
+// Mantiqiy tekshiruv: Ism Ali bo'lishi SHART EMAS, lekin parol 'admin' bo'lishi SHART
+agar parol == "admin" {
+    yoz "Kirish muvaffaqiyatli!"
+    yoz "Xush kelibsiz, " + ism
+    
+    // Kichik matematik o'yin
+    yoz "Matematik qobiliyatingizni tekshiramiz."
+    yoz "2 * 2 + 5 nechchi bo'ladi?"
+    javob = so'ra
+    
+    agar javob == "9" {
+        yoz "To'g'ri! Siz dahosiz."
+    }
+    
+    agar javob != "9" {
+        yoz "Xato. Javob 9 edi. Maktabga qayting :)"
+    }
 }
-yoz "Tamom"
+
+agar parol != "admin" {
+    yoz "Xatolik! Parol noto'g'ri."
+    yoz "Xayr, " + ism
+}
