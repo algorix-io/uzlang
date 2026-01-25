@@ -1,2 +1,8 @@
-agar raqam > 3
-    yoz "Bu katta son"
+yoz "UzLang namuna dasturi"
+
+raqam = 1
+toki raqam < 6
+    yoz raqam
+    raqam = raqam + 1
+
+yoz "Tamom"

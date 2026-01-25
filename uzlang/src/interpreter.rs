@@ -51,10 +51,19 @@ impl Interpreter {
                     self.execute(body);
                 }
             }
+            Stmt::While(cond, body) => {
+                while self.is_truthy(self.evaluate(cond)) {
+                    self.execute(body);
+                }
+            }
+            Stmt::Assign(name, expr) => {
+                let val = self.evaluate(expr);
+                self.set_variable(name, val);
+            }
         }
     }
 
-    fn evaluate(&mut self, expr: &Expr) -> Value {
+    fn evaluate(&self, expr: &Expr) -> Value {
         match expr {
             Expr::Number(n) => Value::Number(*n),
             Expr::StringLiteral(s) => Value::String(s.clone()),
@@ -74,12 +83,22 @@ impl Interpreter {
     fn evaluate_binary(&self, left: Value, op: &str, right: Value) -> Value {
         match (left, right) {
             (Value::Number(l), Value::Number(r)) => match op {
+                "+" => Value::Number(l + r),
+                "-" => Value::Number(l - r),
+                "*" => Value::Number(l * r),
+                "/" => if r != 0 { Value::Number(l / r) } else { Value::Number(0) },
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 ">" => Value::Bool(l > r),
                 "<" => Value::Bool(l < r),
                 ">=" => Value::Bool(l >= r),
                 "<=" => Value::Bool(l <= r),
+                _ => Value::Bool(false),
+            },
+            (Value::String(l), Value::String(r)) => match op {
+                "+" => Value::String(format!("{}{}", l, r)),
+                "==" => Value::Bool(l == r),
+                "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
