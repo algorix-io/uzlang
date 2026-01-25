@@ -75,7 +75,38 @@ impl Interpreter {
                 .get(name)
                 .cloned()
                 .unwrap_or(Value::Number(0)),
+            Expr::Input => {
+                let mut input = String::new();
+                if std::io::stdin().read_line(&mut input).is_ok() {
+                    Value::String(input.trim().to_string())
+                } else {
+                    Value::String(String::new())
+                }
+            }
+            Expr::UnaryOp(op, right) => {
+                let val = self.evaluate(right);
+                match op.as_str() {
+                    "!" => Value::Bool(!self.is_truthy(val)),
+                    _ => Value::Bool(false),
+                }
+            }
             Expr::BinaryOp(left, op, right) => {
+                if op == "&&" {
+                    let l = self.evaluate(left);
+                    if !self.is_truthy(l) {
+                        return Value::Bool(false);
+                    }
+                    let r = self.evaluate(right);
+                    return Value::Bool(self.is_truthy(r));
+                }
+                if op == "||" {
+                    let l = self.evaluate(left);
+                    if self.is_truthy(l) {
+                        return Value::Bool(true);
+                    }
+                    let r = self.evaluate(right);
+                    return Value::Bool(self.is_truthy(r));
+                }
                 let l = self.evaluate(left);
                 let r = self.evaluate(right);
                 self.evaluate_binary(l, op, r)

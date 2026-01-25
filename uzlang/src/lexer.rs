@@ -4,6 +4,10 @@ pub enum Token {
     Toki, // toki (while)
     Yoz,  // yoz
     Takrorla, // takrorla
+    Sora, // so'ra
+    And,  // &&
+    Or,   // ||
+    Not,  // !
     LBrace, // {
     RBrace, // }
     Identifier(String),
@@ -42,7 +46,17 @@ impl Lexer {
                 'a'..='z' | 'A'..='Z' | '_' => {
                     tokens.push(self.read_identifier());
                 }
-                '=' | '!' | '>' | '<' | '+' | '-' | '*' | '/' => {
+                '/' => {
+                    if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '/' {
+                        // Skip comment until newline
+                        while self.pos < self.input.len() && self.input[self.pos] != '\n' {
+                            self.pos += 1;
+                        }
+                    } else {
+                        tokens.push(self.read_operator());
+                    }
+                }
+                '=' | '!' | '>' | '<' | '+' | '-' | '*' | '&' | '|' => {
                     tokens.push(self.read_operator());
                 }
                 '{' => {
@@ -87,7 +101,9 @@ impl Lexer {
     fn read_identifier(&mut self) -> Token {
         let mut s = String::new();
         while self.pos < self.input.len()
-            && (self.input[self.pos].is_ascii_alphanumeric() || self.input[self.pos] == '_')
+            && (self.input[self.pos].is_ascii_alphanumeric()
+                || self.input[self.pos] == '_'
+                || self.input[self.pos] == '\'')
         {
             s.push(self.input[self.pos]);
             self.pos += 1;
@@ -98,6 +114,7 @@ impl Lexer {
             "toki" => Token::Toki,
             "yoz" => Token::Yoz,
             "takrorla" => Token::Takrorla,
+            "so'ra" => Token::Sora,
             _ => Token::Identifier(s),
         }
     }
@@ -110,12 +127,26 @@ impl Lexer {
 
         if self.pos < self.input.len() {
             let next = self.input[self.pos];
+            if current == '&' && next == '&' {
+                s.push(next);
+                self.pos += 1;
+                return Token::And;
+            }
+            if current == '|' && next == '|' {
+                s.push(next);
+                self.pos += 1;
+                return Token::Or;
+            }
             if next == '=' {
                 s.push(next);
                 self.pos += 1;
             }
         }
-        Token::Operator(s)
+
+        match s.as_str() {
+            "!" => Token::Not,
+            _ => Token::Operator(s),
+        }
     }
 }
 
@@ -152,6 +183,34 @@ mod tests {
             Token::Yoz,
             Token::Number(1),
             Token::RBrace,
+            Token::EOF
+        ]);
+    }
+
+    #[test]
+    fn test_new_features() {
+        let input = "so'ra && || ! // comment";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        assert_eq!(tokens, vec![
+            Token::Sora,
+            Token::And,
+            Token::Or,
+            Token::Not,
+            Token::EOF
+        ]);
+    }
+
+    #[test]
+    fn test_operators_mixed() {
+        let input = "!= ! == &&";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        assert_eq!(tokens, vec![
+            Token::Operator("!=".to_string()),
+            Token::Not,
+            Token::Operator("==".to_string()),
+            Token::And,
             Token::EOF
         ]);
     }

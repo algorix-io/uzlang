@@ -6,6 +6,8 @@ pub enum Expr {
     StringLiteral(String),
     Identifier(String),
     BinaryOp(Box<Expr>, String, Box<Expr>),
+    UnaryOp(String, Box<Expr>),
+    Input,
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +135,29 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Option<Expr> {
-        self.parse_comparison()
+        self.parse_logical_or()
+    }
+
+    fn parse_logical_or(&mut self) -> Option<Expr> {
+        let mut left = self.parse_logical_and()?;
+
+        while let Token::Or = self.peek() {
+            self.advance();
+            let right = self.parse_logical_and()?;
+            left = Expr::BinaryOp(Box::new(left), "||".to_string(), Box::new(right));
+        }
+        Some(left)
+    }
+
+    fn parse_logical_and(&mut self) -> Option<Expr> {
+        let mut left = self.parse_comparison()?;
+
+        while let Token::And = self.peek() {
+            self.advance();
+            let right = self.parse_comparison()?;
+            left = Expr::BinaryOp(Box::new(left), "&&".to_string(), Box::new(right));
+        }
+        Some(left)
     }
 
     fn parse_comparison(&mut self) -> Option<Expr> {
@@ -167,12 +191,12 @@ impl Parser {
     }
 
     fn parse_factor(&mut self) -> Option<Expr> {
-        let mut left = self.parse_primary()?;
+        let mut left = self.parse_unary()?;
 
         while let Token::Operator(op) = self.peek().clone() {
             if ["*", "/"].contains(&op.as_str()) {
                 self.advance();
-                let right = self.parse_primary()?;
+                let right = self.parse_unary()?;
                 left = Expr::BinaryOp(Box::new(left), op, Box::new(right));
             } else {
                 break;
@@ -181,11 +205,22 @@ impl Parser {
         Some(left)
     }
 
+    fn parse_unary(&mut self) -> Option<Expr> {
+        if let Token::Not = self.peek() {
+            self.advance();
+            let right = self.parse_unary()?;
+            Some(Expr::UnaryOp("!".to_string(), Box::new(right)))
+        } else {
+            self.parse_primary()
+        }
+    }
+
     fn parse_primary(&mut self) -> Option<Expr> {
         match self.advance() {
             Token::Number(n) => Some(Expr::Number(*n)),
             Token::StringLiteral(s) => Some(Expr::StringLiteral(s.clone())),
             Token::Identifier(s) => Some(Expr::Identifier(s.clone())),
+            Token::Sora => Some(Expr::Input),
             _ => None,
         }
     }
