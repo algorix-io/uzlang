@@ -6,6 +6,7 @@ pub enum Value {
     Number(i64),
     String(String),
     Bool(bool),
+    Array(Vec<Value>),
 }
 
 impl std::fmt::Display for Value {
@@ -14,6 +15,16 @@ impl std::fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", b),
+            Value::Array(arr) => {
+                write!(f, "[")?;
+                for (i, v) in arr.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }
@@ -32,6 +43,13 @@ impl Interpreter {
     }
 
     pub fn set_variable(&mut self, name: &str, val: Value) {
+        for scope in self.env_stack.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), val);
+                return;
+            }
+        }
+
         if let Some(scope) = self.env_stack.last_mut() {
             scope.insert(name.to_string(), val);
         }
@@ -80,9 +98,51 @@ impl Interpreter {
                 }
                 None
             }
+            Stmt::For(var_name, collection, body) => {
+                let collection_val = self.evaluate(collection);
+                if let Value::Array(elements) = collection_val {
+                    for element in elements {
+                        // Create new scope for loop iteration
+                        let mut scope = HashMap::new();
+                        scope.insert(var_name.clone(), element);
+                        self.env_stack.push(scope);
+
+                        let ret = self.execute(body);
+                        self.env_stack.pop();
+
+                        if let Some(val) = ret {
+                            return Some(val);
+                        }
+                    }
+                } else {
+                    eprintln!("Xatolik: 'uchun' faqat massivlar bilan ishlaydi");
+                }
+                None
+            }
             Stmt::Assign(name, expr) => {
                 let val = self.evaluate(expr);
                 self.set_variable(name, val);
+                None
+            }
+            Stmt::AssignIndex(name, index_expr, value_expr) => {
+                let index_val = self.evaluate(index_expr);
+                let value_val = self.evaluate(value_expr);
+                let mut arr_val = self.get_variable(name);
+
+                if let Value::Array(ref mut elements) = arr_val {
+                    if let Value::Number(idx) = index_val {
+                        if idx >= 0 && (idx as usize) < elements.len() {
+                            elements[idx as usize] = value_val;
+                            self.set_variable(name, arr_val);
+                        } else {
+                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                        }
+                    } else {
+                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                    }
+                } else {
+                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
+                }
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -110,6 +170,34 @@ impl Interpreter {
                     Value::String(input.trim().to_string())
                 } else {
                     Value::String(String::new())
+                }
+            }
+            Expr::Array(elements) => {
+                let mut values = Vec::new();
+                for e in elements {
+                    values.push(self.evaluate(e));
+                }
+                Value::Array(values)
+            }
+            Expr::Index(target, index) => {
+                let target_val = self.evaluate(target);
+                let index_val = self.evaluate(index);
+
+                if let Value::Array(elements) = target_val {
+                    if let Value::Number(idx) = index_val {
+                        if idx >= 0 && (idx as usize) < elements.len() {
+                            return elements[idx as usize].clone();
+                        } else {
+                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                            return Value::Number(0);
+                        }
+                    } else {
+                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                        return Value::Number(0);
+                    }
+                } else {
+                    eprintln!("Xatolik: Massiv indekslanishi kerak");
+                    return Value::Number(0);
                 }
             }
             Expr::Call(name, args) => {
@@ -142,9 +230,30 @@ impl Interpreter {
                                 Value::Number(_) => return Value::String("son".to_string()),
                                 Value::String(_) => return Value::String("matn".to_string()),
                                 Value::Bool(_) => return Value::String("mantiq".to_string()),
+                                Value::Array(_) => return Value::String("massiv".to_string()),
                             }
                         }
                          return Value::String("noma'lum".to_string());
+                    }
+                    "uzunlik" => {
+                        if let Some(val) = arg_values.first() {
+                            if let Value::Array(arr) = val {
+                                return Value::Number(arr.len() as i64);
+                            }
+                        }
+                        return Value::Number(0);
+                    }
+                    "qosh" => {
+                        // qosh(arr, val) -> returns new array
+                        if arg_values.len() >= 2 {
+                             if let Value::Array(mut arr) = arg_values[0].clone() {
+                                 arr.push(arg_values[1].clone());
+                                 return Value::Array(arr);
+                             } else {
+                                 eprintln!("Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak");
+                             }
+                        }
+                        return Value::Number(0);
                     }
                     _ => {}
                 }

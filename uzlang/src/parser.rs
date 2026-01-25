@@ -9,14 +9,18 @@ pub enum Expr {
     UnaryOp(String, Box<Expr>),
     Call(String, Vec<Expr>),
     Input,
+    Array(Vec<Expr>),
+    Index(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Print(Expr),
     If(Expr, Vec<Stmt>),
-    Loop(Expr, Vec<Stmt>),
+    Loop(Expr, Vec<Stmt>), // while
+    For(String, Expr, Vec<Stmt>), // for
     Assign(String, Expr),
+    AssignIndex(String, Expr, Expr), // name, index, value
     Function(String, Vec<String>, Vec<Stmt>),
     Return(Expr),
     Expr(Expr),
@@ -54,14 +58,6 @@ impl Parser {
         }
     }
 
-    fn peek_next(&self) -> &Token {
-        if self.pos + 1 < self.tokens.len() {
-            &self.tokens[self.pos + 1]
-        } else {
-            &Token::EOF
-        }
-    }
-
     fn advance(&mut self) -> &Token {
         if self.pos < self.tokens.len() {
             self.pos += 1;
@@ -86,8 +82,6 @@ impl Parser {
             if let Some(stmt) = self.parse_stmt() {
                 stmts.push(stmt);
             } else {
-                // Skip one token to attempt recovery, or just break?
-                // For MVP, consuming one token matches `parse` loop behavior.
                 self.advance();
             }
         }
@@ -119,6 +113,19 @@ impl Parser {
                 let condition = self.parse_expr()?;
                 let body = self.parse_block()?;
                 Some(Stmt::Loop(condition, body))
+            }
+            Token::Uchun => {
+                self.advance(); // consume uchun
+                if let Token::Identifier(var_name) = self.advance().clone() {
+                    if let Token::Ichida = self.peek() {
+                        self.advance(); // consume ichida
+                        let collection = self.parse_expr()?;
+                        let body = self.parse_block()?;
+                        return Some(Stmt::For(var_name, collection, body));
+                    }
+                }
+                eprintln!("Xatolik: For tsikli 'uchun <var> ichida <expr>' formatida bo'lishi kerak");
+                None
             }
             Token::Funksiya => {
                 self.advance();
@@ -156,25 +163,35 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 Some(Stmt::Return(expr))
             }
-            Token::Identifier(name) => {
-                // Check if it is an assignment
-                match self.peek_next() {
-                    Token::Operator(op) if op == "=" => {
-                        let name = name.clone();
-                        self.advance(); // consume identifier
+            _ => {
+                // Expression statement or Assignment
+                let expr = self.parse_expr()?;
+
+                if let Token::Operator(op) = self.peek() {
+                    if op == "=" {
                         self.advance(); // consume =
-                        let expr = self.parse_expr()?;
-                        Some(Stmt::Assign(name, expr))
+                        let value = self.parse_expr()?;
+
+                        match expr {
+                            Expr::Identifier(name) => return Some(Stmt::Assign(name, value)),
+                            Expr::Index(target, index) => {
+                                if let Expr::Identifier(name) = *target {
+                                    return Some(Stmt::AssignIndex(name, *index, value));
+                                } else {
+                                    eprintln!("Xatolik: Faqat o'zgaruvchilarga indeks orqali qiymat berish mumkin");
+                                    return None;
+                                }
+                            }
+                            _ => {
+                                eprintln!("Xatolik: Noto'g'ri o'zlashtirish, chap tarafda o'zgaruvchi bo'lishi kerak");
+                                return None;
+                            }
+                        }
                     }
-                    // Check if it is a function call statement
-                    Token::LParen => {
-                        let expr = self.parse_expr()?;
-                        Some(Stmt::Expr(expr))
-                    }
-                    _ => None,
                 }
+
+                Some(Stmt::Expr(expr))
             }
-            _ => None,
         }
     }
 
@@ -255,27 +272,92 @@ impl Parser {
             let right = self.parse_unary()?;
             Some(Expr::UnaryOp("!".to_string(), Box::new(right)))
         } else {
-            self.parse_primary()
+            self.parse_postfix()
         }
     }
 
-    fn parse_primary(&mut self) -> Option<Expr> {
-        // Look ahead for function call
-        if let Token::Identifier(name) = self.peek() {
-            if self.peek_next() == &Token::LParen {
-                let name = name.clone();
-                self.advance(); // consume name
-                self.advance(); // consume (
+    fn parse_postfix(&mut self) -> Option<Expr> {
+        let mut left = self.parse_primary()?;
 
-                let mut args = Vec::new();
-                if self.peek() != &Token::RParen {
-                     loop {
-                        if let Some(arg) = self.parse_expr() {
-                            args.push(arg);
-                        } else {
-                            break;
+        loop {
+            match self.peek() {
+                Token::LBracket => {
+                    self.advance(); // consume [
+                    let index = self.parse_expr()?;
+                    if let Token::RBracket = self.advance() {
+                        left = Expr::Index(Box::new(left), Box::new(index));
+                    } else {
+                        eprintln!("Xatolik: ] kutilgan");
+                        return None;
+                    }
+                }
+                Token::LParen => {
+                    // Function Call
+                    if let Expr::Identifier(name) = left {
+                        self.advance(); // consume (
+                        let mut args = Vec::new();
+                        if self.peek() != &Token::RParen {
+                             loop {
+                                if let Some(arg) = self.parse_expr() {
+                                    args.push(arg);
+                                } else {
+                                    break;
+                                }
+
+                                if self.peek() == &Token::Comma {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
                         }
 
+                        if let Token::RParen = self.advance() {
+                            left = Expr::Call(name, args);
+                        } else {
+                            eprintln!("Xatolik: ) kutilgan");
+                            return None;
+                        }
+                    } else {
+                         // Call on non-identifier (e.g. (func())()) - not supported for now as Call takes String
+                         // Or grouping? No, grouping is handled in parse_primary
+                         eprintln!("Xatolik: Faqat funksiya nomini chaqirish mumkin");
+                         return None;
+                    }
+                }
+                _ => break,
+            }
+        }
+        Some(left)
+    }
+
+    fn parse_primary(&mut self) -> Option<Expr> {
+        match self.peek() {
+            Token::Number(n) => {
+                let n = *n;
+                self.advance();
+                Some(Expr::Number(n))
+            }
+            Token::StringLiteral(s) => {
+                let s = s.clone();
+                self.advance();
+                Some(Expr::StringLiteral(s))
+            }
+            Token::Identifier(s) => {
+                let s = s.clone();
+                self.advance();
+                Some(Expr::Identifier(s))
+            }
+            Token::Sora => {
+                self.advance();
+                Some(Expr::Input)
+            }
+            Token::LBracket => {
+                self.advance(); // consume [
+                let mut elements = Vec::new();
+                if self.peek() != &Token::RBracket {
+                    loop {
+                        elements.push(self.parse_expr()?);
                         if self.peek() == &Token::Comma {
                             self.advance();
                         } else {
@@ -283,21 +365,23 @@ impl Parser {
                         }
                     }
                 }
-
-                if let Token::RParen = self.advance() {
-                    return Some(Expr::Call(name, args));
+                if let Token::RBracket = self.advance() {
+                    Some(Expr::Array(elements))
                 } else {
-                    eprintln!("Xatolik: ) kutilgan");
-                    return None;
+                    eprintln!("Xatolik: ] kutilgan");
+                    None
                 }
             }
-        }
-
-        match self.advance() {
-            Token::Number(n) => Some(Expr::Number(*n)),
-            Token::StringLiteral(s) => Some(Expr::StringLiteral(s.clone())),
-            Token::Identifier(s) => Some(Expr::Identifier(s.clone())),
-            Token::Sora => Some(Expr::Input),
+            Token::LParen => {
+                self.advance(); // consume (
+                let expr = self.parse_expr()?;
+                if let Token::RParen = self.advance() {
+                    Some(expr)
+                } else {
+                    eprintln!("Xatolik: ) kutilgan");
+                    None
+                }
+            }
             _ => None,
         }
     }
