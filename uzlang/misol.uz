@@ -1,2 +1,7 @@
-agar raqam > 3
-    yoz "Bu katta son"
+yoz "UzLang 2.0 Loop Test"
+a = 0
+takrorla a < 5 {
+    yoz a
+    a = a + 1
+}
+yoz "Tamom"

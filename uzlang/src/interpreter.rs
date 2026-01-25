@@ -51,6 +51,18 @@ impl Interpreter {
                     self.execute(body);
                 }
             }
+            Stmt::Loop(cond, body) => {
+                while {
+                    let val = self.evaluate(cond);
+                    self.is_truthy(val)
+                } {
+                    self.execute(body);
+                }
+            }
+            Stmt::Assign(name, expr) => {
+                let val = self.evaluate(expr);
+                self.set_variable(name, val);
+            }
         }
     }
 
@@ -74,6 +86,10 @@ impl Interpreter {
     fn evaluate_binary(&self, left: Value, op: &str, right: Value) -> Value {
         match (left, right) {
             (Value::Number(l), Value::Number(r)) => match op {
+                "+" => Value::Number(l + r),
+                "-" => Value::Number(l - r),
+                "*" => Value::Number(l * r),
+                "/" => Value::Number(l / r),
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 ">" => Value::Bool(l > r),

@@ -12,6 +12,8 @@ pub enum Expr {
 pub enum Stmt {
     Print(Expr),
     If(Expr, Vec<Stmt>),
+    Loop(Expr, Vec<Stmt>),
+    Assign(String, Expr),
 }
 
 pub struct Parser {
@@ -45,6 +47,14 @@ impl Parser {
         }
     }
 
+    fn peek_next(&self) -> &Token {
+        if self.pos + 1 < self.tokens.len() {
+            &self.tokens[self.pos + 1]
+        } else {
+            &Token::EOF
+        }
+    }
+
     fn advance(&mut self) -> &Token {
         if self.pos < self.tokens.len() {
             self.pos += 1;
@@ -53,6 +63,34 @@ impl Parser {
             &self.tokens[self.pos - 1]
         } else {
             &Token::EOF
+        }
+    }
+
+    fn parse_block(&mut self) -> Option<Vec<Stmt>> {
+        if let Token::LBrace = self.peek() {
+            self.advance(); // consume {
+        } else {
+            eprintln!("Xatolik: Blok {{ bilan boshlanishi kerak");
+            return None;
+        }
+
+        let mut stmts = Vec::new();
+        while self.peek() != &Token::RBrace && self.peek() != &Token::EOF {
+            if let Some(stmt) = self.parse_stmt() {
+                stmts.push(stmt);
+            } else {
+                // Skip one token to attempt recovery, or just break?
+                // For MVP, consuming one token matches `parse` loop behavior.
+                self.advance();
+            }
+        }
+
+        if let Token::RBrace = self.peek() {
+            self.advance(); // consume }
+            Some(stmts)
+        } else {
+            eprintln!("Xatolik: Blok }} bilan tugashi kerak");
+            None
         }
     }
 
@@ -66,23 +104,78 @@ impl Parser {
             Token::Agar => {
                 self.advance();
                 let condition = self.parse_expr()?;
-                // Simplification: Expect a single statement as the body for now
-                let body_stmt = self.parse_stmt()?;
-                Some(Stmt::If(condition, vec![body_stmt]))
+                let body = self.parse_block()?;
+                Some(Stmt::If(condition, body))
+            }
+            Token::Takrorla => {
+                self.advance();
+                let condition = self.parse_expr()?;
+                let body = self.parse_block()?;
+                Some(Stmt::Loop(condition, body))
+            }
+            Token::Identifier(name) => {
+                // Check if it is an assignment
+                match self.peek_next() {
+                    Token::Operator(op) if op == "=" => {
+                        let name = name.clone();
+                        self.advance(); // consume identifier
+                        self.advance(); // consume =
+                        let expr = self.parse_expr()?;
+                        Some(Stmt::Assign(name, expr))
+                    }
+                    _ => None,
+                }
             }
             _ => None,
         }
     }
 
     fn parse_expr(&mut self) -> Option<Expr> {
+        self.parse_comparison()
+    }
+
+    fn parse_comparison(&mut self) -> Option<Expr> {
+        let mut left = self.parse_term()?;
+
+        while let Token::Operator(op) = self.peek().clone() {
+            if ["==", "!=", "<", ">", "<=", ">="].contains(&op.as_str()) {
+                self.advance();
+                let right = self.parse_term()?;
+                left = Expr::BinaryOp(Box::new(left), op, Box::new(right));
+            } else {
+                break;
+            }
+        }
+        Some(left)
+    }
+
+    fn parse_term(&mut self) -> Option<Expr> {
+        let mut left = self.parse_factor()?;
+
+        while let Token::Operator(op) = self.peek().clone() {
+            if ["+", "-"].contains(&op.as_str()) {
+                self.advance();
+                let right = self.parse_factor()?;
+                left = Expr::BinaryOp(Box::new(left), op, Box::new(right));
+            } else {
+                break;
+            }
+        }
+        Some(left)
+    }
+
+    fn parse_factor(&mut self) -> Option<Expr> {
         let mut left = self.parse_primary()?;
 
         while let Token::Operator(op) = self.peek().clone() {
-            self.advance();
-            let right = self.parse_primary()?;
-            left = Expr::BinaryOp(Box::new(left), op, Box::new(right));
+            if ["*", "/"].contains(&op.as_str()) {
+                self.advance();
+                let right = self.parse_primary()?;
+                left = Expr::BinaryOp(Box::new(left), op, Box::new(right));
+            } else {
+                break;
+            }
         }
-
         Some(left)
     }
 

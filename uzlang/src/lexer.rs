@@ -2,10 +2,13 @@
 pub enum Token {
     Agar, // agar
     Yoz,  // yoz
+    Takrorla, // takrorla
+    LBrace, // {
+    RBrace, // }
     Identifier(String),
     Number(i64),
     StringLiteral(String),
-    Operator(String), // ==, >, <, etc.
+    Operator(String), // ==, >, <, +, -, *, / etc.
     EOF,
 }
 
@@ -38,8 +41,16 @@ impl Lexer {
                 'a'..='z' | 'A'..='Z' | '_' => {
                     tokens.push(self.read_identifier());
                 }
-                '=' | '!' | '>' | '<' => {
+                '=' | '!' | '>' | '<' | '+' | '-' | '*' | '/' => {
                     tokens.push(self.read_operator());
+                }
+                '{' => {
+                    tokens.push(Token::LBrace);
+                    self.pos += 1;
+                }
+                '}' => {
+                    tokens.push(Token::RBrace);
+                    self.pos += 1;
                 }
                 _ => {
                     // Unknown character, skip for now or error
@@ -83,6 +94,7 @@ impl Lexer {
         match s.as_str() {
             "agar" => Token::Agar,
             "yoz" => Token::Yoz,
+            "takrorla" => Token::Takrorla,
             _ => Token::Identifier(s),
         }
     }
