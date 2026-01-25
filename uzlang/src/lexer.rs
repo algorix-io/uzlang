@@ -111,7 +111,22 @@ impl Lexer {
         self.pos += 1; // skip opening quote
         let mut s = String::new();
         while self.pos < self.input.len() && self.input[self.pos] != '"' {
-            s.push(self.input[self.pos]);
+            if self.input[self.pos] == '\\' && self.pos + 1 < self.input.len() {
+                self.pos += 1;
+                match self.input[self.pos] {
+                    'n' => s.push('\n'),
+                    'r' => s.push('\r'),
+                    't' => s.push('\t'),
+                    '"' => s.push('"'),
+                    '\\' => s.push('\\'),
+                    c => {
+                        s.push('\\');
+                        s.push(c);
+                    }
+                }
+            } else {
+                s.push(self.input[self.pos]);
+            }
             self.pos += 1;
         }
         self.pos += 1; // skip closing quote

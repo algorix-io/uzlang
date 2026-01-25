@@ -1,5 +1,7 @@
 use crate::parser::{Expr, Stmt};
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -254,6 +256,51 @@ impl Interpreter {
                              }
                         }
                         return Value::Number(0);
+                    }
+                    "fayl_oqi" => {
+                        if let Some(val) = arg_values.first() {
+                            if let Value::String(path) = val {
+                                return match fs::read_to_string(path) {
+                                    Ok(content) => Value::String(content),
+                                    Err(_) => Value::String("".to_string()),
+                                };
+                            }
+                        }
+                        return Value::String("".to_string());
+                    }
+                    "fayl_yoz" => {
+                        if arg_values.len() >= 2 {
+                            if let (Value::String(path), Value::String(content)) =
+                                (&arg_values[0], &arg_values[1])
+                            {
+                                return match fs::write(path, content) {
+                                    Ok(_) => Value::Bool(true),
+                                    Err(_) => Value::Bool(false),
+                                };
+                            }
+                        }
+                        return Value::Bool(false);
+                    }
+                    "fayl_qosh" => {
+                        if arg_values.len() >= 2 {
+                            if let (Value::String(path), Value::String(content)) =
+                                (&arg_values[0], &arg_values[1])
+                            {
+                                let mut file = match fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(path)
+                                {
+                                    Ok(f) => f,
+                                    Err(_) => return Value::Bool(false),
+                                };
+                                return match file.write_all(content.as_bytes()) {
+                                    Ok(_) => Value::Bool(true),
+                                    Err(_) => Value::Bool(false),
+                                };
+                            }
+                        }
+                        return Value::Bool(false);
                     }
                     _ => {}
                 }

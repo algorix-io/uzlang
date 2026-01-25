@@ -1,0 +1,18 @@
+// UzLang 5.0: Fayllar bilan ishlash
+
+yoz "Fayl yaratilmoqda..."
+xabar = "Salom, bu UzLang tomonidan yozildi!\n"
+natija = fayl_yoz("test_log.txt", xabar)
+
+agar natija {
+    yoz "Fayl muvaffaqiyatli yozildi!"
+}
+
+yoz "Faylga qo'shimcha qo'shamiz..."
+fayl_qosh("test_log.txt", "Bu ikkinchi qator.\n")
+
+yoz "Fayl o'qilmoqda:"
+mazmun = fayl_oqi("test_log.txt")
+yoz "--- Fayl ichi ---"
+yoz mazmun
+yoz "-----------------"
