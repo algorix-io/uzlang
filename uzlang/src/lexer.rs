@@ -7,6 +7,8 @@ pub enum Token {
     Sora, // so'ra
     Funksiya, // funksiya
     Qaytar, // qaytar
+    Uchun, // uchun (for)
+    Ichida, // ichida (in)
     And,  // &&
     Or,   // ||
     Not,  // !
@@ -14,6 +16,8 @@ pub enum Token {
     RBrace, // }
     LParen, // (
     RParen, // )
+    LBracket, // [
+    RBracket, // ]
     Comma,  // ,
     Identifier(String),
     Number(i64),
@@ -80,6 +84,14 @@ impl Lexer {
                     tokens.push(Token::RParen);
                     self.pos += 1;
                 }
+                '[' => {
+                    tokens.push(Token::LBracket);
+                    self.pos += 1;
+                }
+                ']' => {
+                    tokens.push(Token::RBracket);
+                    self.pos += 1;
+                }
                 ',' => {
                     tokens.push(Token::Comma);
                     self.pos += 1;
@@ -134,6 +146,8 @@ impl Lexer {
             "so'ra" => Token::Sora,
             "funksiya" => Token::Funksiya,
             "qaytar" => Token::Qaytar,
+            "uchun" => Token::Uchun,
+            "ichida" => Token::Ichida,
             _ => Token::Identifier(s),
         }
     }
@@ -253,6 +267,24 @@ mod tests {
             Token::Operator("+".to_string()),
             Token::Identifier("b".to_string()),
             Token::RBrace,
+            Token::EOF
+        ]);
+    }
+
+    #[test]
+    fn test_arrays_and_loops() {
+        let input = "uchun x ichida [1, 2]";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        assert_eq!(tokens, vec![
+            Token::Uchun,
+            Token::Identifier("x".to_string()),
+            Token::Ichida,
+            Token::LBracket,
+            Token::Number(1),
+            Token::Comma,
+            Token::Number(2),
+            Token::RBracket,
             Token::EOF
         ]);
     }
