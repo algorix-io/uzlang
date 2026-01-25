@@ -1,6 +1,7 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Agar, // agar
+    Toki, // toki (while)
     Yoz,  // yoz
     Takrorla, // takrorla
     LBrace, // {
@@ -15,6 +16,7 @@ pub enum Token {
 pub struct Lexer {
     input: Vec<char>,
     pos: usize,
+    indent_stack: Vec<usize>,
 }
 
 impl Lexer {
@@ -22,6 +24,7 @@ impl Lexer {
         Lexer {
             input: input.chars().collect(),
             pos: 0,
+            indent_stack: vec![0],
         }
     }
 
@@ -29,7 +32,10 @@ impl Lexer {
         let mut tokens = Vec::new();
         while self.pos < self.input.len() {
             match self.input[self.pos] {
-                ' ' | '\t' | '\n' | '\r' => {
+                '\n' => {
+                    self.handle_newline(&mut tokens);
+                }
+                ' ' | '\t' | '\r' => {
                     self.pos += 1;
                 }
                 '"' => {
@@ -53,13 +59,77 @@ impl Lexer {
                     self.pos += 1;
                 }
                 _ => {
-                    // Unknown character, skip for now or error
+                    // Unknown character, skip for now
                     self.pos += 1;
                 }
             }
         }
+
+        // Emit Dedents for remaining indentation
+        while self.indent_stack.len() > 1 {
+            self.indent_stack.pop();
+            tokens.push(Token::Dedent);
+        }
+
         tokens.push(Token::EOF);
         tokens
+    }
+
+    fn peek_char(&self) -> char {
+        if self.pos + 1 < self.input.len() {
+            self.input[self.pos + 1]
+        } else {
+            '\0'
+        }
+    }
+
+    fn handle_newline(&mut self, tokens: &mut Vec<Token>) {
+        self.pos += 1; // skip initial \n
+
+        let mut spaces = 0;
+        loop {
+            if self.pos >= self.input.len() {
+                break;
+            }
+            match self.input[self.pos] {
+                ' ' => {
+                    spaces += 1;
+                    self.pos += 1;
+                }
+                '\t' => {
+                    spaces += 4; // assume tab = 4 spaces
+                    self.pos += 1;
+                }
+                '\r' => {
+                    self.pos += 1;
+                }
+                '\n' => {
+                    // Empty line (just whitespace), reset and continue
+                    spaces = 0;
+                    self.pos += 1;
+                }
+                _ => break,
+            }
+        }
+
+        if self.pos >= self.input.len() {
+            return;
+        }
+
+        tokens.push(Token::Newline);
+
+        let current_indent = spaces;
+        let last_indent = *self.indent_stack.last().unwrap();
+
+        if current_indent > last_indent {
+            self.indent_stack.push(current_indent);
+            tokens.push(Token::Indent);
+        } else if current_indent < last_indent {
+            while *self.indent_stack.last().unwrap() > current_indent {
+                self.indent_stack.pop();
+                tokens.push(Token::Dedent);
+            }
+        }
     }
 
     fn read_string(&mut self) -> Token {
@@ -93,6 +163,7 @@ impl Lexer {
 
         match s.as_str() {
             "agar" => Token::Agar,
+            "toki" => Token::Toki,
             "yoz" => Token::Yoz,
             "takrorla" => Token::Takrorla,
             _ => Token::Identifier(s),

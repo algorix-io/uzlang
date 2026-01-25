@@ -66,7 +66,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate(&mut self, expr: &Expr) -> Value {
+    fn evaluate(&self, expr: &Expr) -> Value {
         match expr {
             Expr::Number(n) => Value::Number(*n),
             Expr::StringLiteral(s) => Value::String(s.clone()),
@@ -96,6 +96,12 @@ impl Interpreter {
                 "<" => Value::Bool(l < r),
                 ">=" => Value::Bool(l >= r),
                 "<=" => Value::Bool(l <= r),
+                _ => Value::Bool(false),
+            },
+            (Value::String(l), Value::String(r)) => match op {
+                "+" => Value::String(format!("{}{}", l, r)),
+                "==" => Value::Bool(l == r),
+                "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
