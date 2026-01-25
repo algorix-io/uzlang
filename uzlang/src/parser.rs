@@ -29,19 +29,12 @@ impl Parser {
     pub fn parse(&mut self) -> Vec<Stmt> {
         let mut stmts = Vec::new();
         while self.peek() != &Token::EOF {
-            match self.peek() {
-                Token::Newline => {
-                    self.advance();
-                }
-                _ => {
-                    if let Some(stmt) = self.parse_stmt() {
-                        stmts.push(stmt);
-                    } else {
-                        // Skip token to avoid infinite loop on error
-                        let token = self.advance();
-                        eprintln!("Xatolik: Kutilmagan token: {:?}", token);
-                    }
-                }
+            if let Some(stmt) = self.parse_stmt() {
+                stmts.push(stmt);
+            } else {
+                // Skip token to avoid infinite loop on error
+                let token = self.advance();
+                eprintln!("Xatolik: Kutilmagan token: {:?}", token);
             }
         }
         stmts
@@ -137,37 +130,6 @@ impl Parser {
             }
             _ => None,
         }
-    }
-
-    fn parse_block(&mut self) -> Option<Vec<Stmt>> {
-        if self.peek() != &Token::Indent {
-            return None;
-        }
-        self.advance(); // eat Indent
-
-        let mut stmts = Vec::new();
-
-        while self.peek() != &Token::Dedent && self.peek() != &Token::EOF {
-             match self.peek() {
-                Token::Newline => {
-                    self.advance();
-                }
-                _ => {
-                    if let Some(stmt) = self.parse_stmt() {
-                        stmts.push(stmt);
-                    } else {
-                        // Error inside block
-                        self.advance();
-                    }
-                }
-            }
-        }
-
-        if self.peek() == &Token::Dedent {
-            self.advance();
-        }
-
-        Some(stmts)
     }
 
     fn parse_expr(&mut self) -> Option<Expr> {
