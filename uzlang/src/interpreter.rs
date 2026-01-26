@@ -1,5 +1,6 @@
 use crate::parser::{Expr, Stmt};
 use std::collections::HashMap;
+use reqwest;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -254,6 +255,54 @@ impl Interpreter {
                              }
                         }
                         return Value::Number(0);
+                    }
+                    "internet_ol" => {
+                        if let Some(val) = arg_values.first() {
+                            let url = val.to_string();
+                            match reqwest::blocking::get(&url) {
+                                Ok(resp) => {
+                                    match resp.text() {
+                                        Ok(text) => return Value::String(text),
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
+                                            return Value::String("".to_string());
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    return Value::String("".to_string());
+                                }
+                            }
+                        }
+                        return Value::String("".to_string());
+                    }
+                    "internet_yoz" => {
+                        if arg_values.len() >= 2 {
+                            let url = arg_values[0].to_string();
+                            let json_data = arg_values[1].to_string();
+
+                            let client = reqwest::blocking::Client::new();
+                            match client.post(&url)
+                                .header("Content-Type", "application/json")
+                                .body(json_data)
+                                .send() {
+                                Ok(resp) => {
+                                    match resp.text() {
+                                        Ok(text) => return Value::String(text),
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
+                                            return Value::String("".to_string());
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    return Value::String("".to_string());
+                                }
+                            }
+                        }
+                        return Value::String("".to_string());
                     }
                     _ => {}
                 }

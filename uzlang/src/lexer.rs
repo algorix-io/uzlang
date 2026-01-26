@@ -110,8 +110,25 @@ impl Lexer {
     fn read_string(&mut self) -> Token {
         self.pos += 1; // skip opening quote
         let mut s = String::new();
-        while self.pos < self.input.len() && self.input[self.pos] != '"' {
-            s.push(self.input[self.pos]);
+        while self.pos < self.input.len() {
+            if self.input[self.pos] == '"' {
+                break;
+            }
+            if self.input[self.pos] == '\\' {
+                self.pos += 1;
+                if self.pos < self.input.len() {
+                    match self.input[self.pos] {
+                        'n' => s.push('\n'),
+                        't' => s.push('\t'),
+                        'r' => s.push('\r'),
+                        '\\' => s.push('\\'),
+                        '"' => s.push('"'),
+                        _ => s.push(self.input[self.pos]),
+                    }
+                }
+            } else {
+                s.push(self.input[self.pos]);
+            }
             self.pos += 1;
         }
         self.pos += 1; // skip closing quote
