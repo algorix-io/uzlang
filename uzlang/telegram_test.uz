@@ -1,0 +1,10 @@
+// UzLang v6.0: Telegram Bot Testi
+
+token = "SIZNING_BOT_TOKENINGIZ"
+url = "https://api.telegram.org/bot" + token + "/getMe"
+
+yoz "Telegramga ulanmoqda..."
+javob = internet_ol(url)
+
+yoz "Serverdan javob keldi:"
+yoz javob
