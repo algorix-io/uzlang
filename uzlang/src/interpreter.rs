@@ -1,5 +1,6 @@
 use crate::parser::{Expr, Stmt};
 use std::collections::HashMap;
+use std::rc::Rc;
 use reqwest;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,7 +33,7 @@ impl std::fmt::Display for Value {
 
 pub struct Interpreter {
     env_stack: Vec<HashMap<String, Value>>,
-    functions: HashMap<String, (Vec<String>, Vec<Stmt>)>,
+    functions: HashMap<String, (Rc<Vec<String>>, Rc<Vec<Stmt>>)>,
 }
 
 impl Interpreter {
@@ -147,7 +148,7 @@ impl Interpreter {
                 None
             }
             Stmt::Function(name, params, body) => {
-                self.functions.insert(name.clone(), (params.clone(), body.clone()));
+                self.functions.insert(name.clone(), (Rc::new(params.clone()), Rc::new(body.clone())));
                 None
             }
             Stmt::Return(expr) => {
@@ -308,7 +309,10 @@ impl Interpreter {
                 }
 
                 // User functions
-                if let Some((params, body)) = self.functions.get(name).cloned() {
+                if let Some((params, body)) = self.functions.get(name) {
+                    let params = Rc::clone(params);
+                    let body = Rc::clone(body);
+
                     // Create new scope
                     let mut scope = HashMap::new();
                     for (i, param) in params.iter().enumerate() {
