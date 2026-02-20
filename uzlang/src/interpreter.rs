@@ -6,9 +6,9 @@ use reqwest;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(i64),
-    String(String),
+    String(Rc<String>),
     Bool(bool),
-    Array(Vec<Value>),
+    Array(Rc<Vec<Value>>),
 }
 
 impl std::fmt::Display for Value {
@@ -103,10 +103,10 @@ impl Interpreter {
             Stmt::For(var_name, collection, body) => {
                 let collection_val = self.evaluate(collection);
                 if let Value::Array(elements) = collection_val {
-                    for element in elements {
+                    for element in elements.iter() {
                         // Create new scope for loop iteration
                         let mut scope = HashMap::new();
-                        scope.insert(var_name.clone(), element);
+                        scope.insert(var_name.clone(), element.clone());
                         self.env_stack.push(scope);
 
                         let ret = self.execute(body);
@@ -131,8 +131,9 @@ impl Interpreter {
                 let value_val = self.evaluate(value_expr);
                 let mut arr_val = self.get_variable(name);
 
-                if let Value::Array(ref mut elements) = arr_val {
+                if let Value::Array(ref mut rc_arr) = arr_val {
                     if let Value::Number(idx) = index_val {
+                        let elements = Rc::make_mut(rc_arr);
                         if idx >= 0 && (idx as usize) < elements.len() {
                             elements[idx as usize] = value_val;
                             self.set_variable(name, arr_val);
@@ -164,14 +165,14 @@ impl Interpreter {
     fn evaluate(&mut self, expr: &Expr) -> Value {
         match expr {
             Expr::Number(n) => Value::Number(*n),
-            Expr::StringLiteral(s) => Value::String(s.clone()),
+            Expr::StringLiteral(s) => Value::String(Rc::new(s.clone())),
             Expr::Identifier(name) => self.get_variable(name),
             Expr::Input => {
                 let mut input = String::new();
                 if std::io::stdin().read_line(&mut input).is_ok() {
-                    Value::String(input.trim().to_string())
+                    Value::String(Rc::new(input.trim().to_string()))
                 } else {
-                    Value::String(String::new())
+                    Value::String(Rc::new(String::new()))
                 }
             }
             Expr::Array(elements) => {
@@ -179,7 +180,7 @@ impl Interpreter {
                 for e in elements {
                     values.push(self.evaluate(e));
                 }
-                Value::Array(values)
+                Value::Array(Rc::new(values))
             }
             Expr::Index(target, index) => {
                 let target_val = self.evaluate(target);
@@ -222,20 +223,20 @@ impl Interpreter {
                     }
                     "matn" => {
                         if let Some(val) = arg_values.first() {
-                            return Value::String(val.to_string());
+                            return Value::String(Rc::new(val.to_string()));
                         }
-                        return Value::String("".to_string());
+                        return Value::String(Rc::new("".to_string()));
                     }
                     "turi" => {
                         if let Some(val) = arg_values.first() {
                             match val {
-                                Value::Number(_) => return Value::String("son".to_string()),
-                                Value::String(_) => return Value::String("matn".to_string()),
-                                Value::Bool(_) => return Value::String("mantiq".to_string()),
-                                Value::Array(_) => return Value::String("massiv".to_string()),
+                                Value::Number(_) => return Value::String(Rc::new("son".to_string())),
+                                Value::String(_) => return Value::String(Rc::new("matn".to_string())),
+                                Value::Bool(_) => return Value::String(Rc::new("mantiq".to_string())),
+                                Value::Array(_) => return Value::String(Rc::new("massiv".to_string())),
                             }
                         }
-                         return Value::String("noma'lum".to_string());
+                         return Value::String(Rc::new("noma'lum".to_string()));
                     }
                     "uzunlik" => {
                         if let Some(val) = arg_values.first() {
@@ -248,9 +249,10 @@ impl Interpreter {
                     "qosh" => {
                         // qosh(arr, val) -> returns new array
                         if arg_values.len() >= 2 {
-                             if let Value::Array(mut arr) = arg_values[0].clone() {
+                             if let Value::Array(rc_arr) = &arg_values[0] {
+                                 let mut arr = (**rc_arr).clone();
                                  arr.push(arg_values[1].clone());
-                                 return Value::Array(arr);
+                                 return Value::Array(Rc::new(arr));
                              } else {
                                  eprintln!("Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak");
                              }
@@ -263,20 +265,20 @@ impl Interpreter {
                             match reqwest::blocking::get(&url) {
                                 Ok(resp) => {
                                     match resp.text() {
-                                        Ok(text) => return Value::String(text),
+                                        Ok(text) => return Value::String(Rc::new(text)),
                                         Err(e) => {
                                             eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::String("".to_string());
+                                            return Value::String(Rc::new("".to_string()));
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                    return Value::String("".to_string());
+                                    return Value::String(Rc::new("".to_string()));
                                 }
                             }
                         }
-                        return Value::String("".to_string());
+                        return Value::String(Rc::new("".to_string()));
                     }
                     "internet_yoz" => {
                         if arg_values.len() >= 2 {
@@ -290,20 +292,20 @@ impl Interpreter {
                                 .send() {
                                 Ok(resp) => {
                                     match resp.text() {
-                                        Ok(text) => return Value::String(text),
+                                        Ok(text) => return Value::String(Rc::new(text)),
                                         Err(e) => {
                                             eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::String("".to_string());
+                                            return Value::String(Rc::new("".to_string()));
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                    return Value::String("".to_string());
+                                    return Value::String(Rc::new("".to_string()));
                                 }
                             }
                         }
-                        return Value::String("".to_string());
+                        return Value::String(Rc::new("".to_string()));
                     }
                     _ => {}
                 }
@@ -381,17 +383,17 @@ impl Interpreter {
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::String(r)) => match op {
-                "+" => Value::String(format!("{}{}", l, r)),
+                "+" => Value::String(Rc::new(format!("{}{}", l, r))),
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::Number(r)) => match op {
-                "+" => Value::String(format!("{}{}", l, r)),
+                "+" => Value::String(Rc::new(format!("{}{}", l, r))),
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
-                "+" => Value::String(format!("{}{}", l, r)),
+                "+" => Value::String(Rc::new(format!("{}{}", l, r))),
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
