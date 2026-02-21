@@ -48,7 +48,13 @@ fn is_safe_url(url_str: &str) -> bool {
             return false;
         }
         if let Some(host) = url.host_str() {
-            if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+            if host == "localhost" || host == "::1" || host == "[::1]" {
+                return false;
+            }
+            if host.starts_with("127.") {
+                return false;
+            }
+            if host.starts_with("0.") {
                 return false;
             }
             if host.starts_with("192.168.") || host.starts_with("10.") {
@@ -299,7 +305,22 @@ impl Interpreter {
                     "internet_ol" => {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
-                            match reqwest::blocking::get(&url) {
+
+                            if !is_safe_url(&url) {
+                                eprintln!(
+                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                    url
+                                );
+                                return Value::empty_string();
+                            }
+
+                            // Create client that does not follow redirects for security
+                            let client = reqwest::blocking::Client::builder()
+                                .redirect(reqwest::redirect::Policy::none())
+                                .build()
+                                .unwrap();
+
+                            match client.get(&url).send() {
                                 Ok(resp) => {
                                     match resp.text() {
                                         Ok(text) => return Value::String(Rc::from(text)),
@@ -327,7 +348,7 @@ impl Interpreter {
                                     "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
                                     url
                                 );
-                                return Value::String("".to_string());
+                                return Value::empty_string();
                             }
 
                             // Create client that does not follow redirects for security
