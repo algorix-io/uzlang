@@ -80,8 +80,8 @@ impl Interpreter {
 
     pub fn set_variable(&mut self, name: &str, val: Value) {
         for scope in self.env_stack.iter_mut().rev() {
-            if scope.contains_key(name) {
-                scope.insert(name.to_string(), val);
+            if let Some(existing_val) = scope.get_mut(name) {
+                *existing_val = val;
                 return;
             }
         }
@@ -327,7 +327,7 @@ impl Interpreter {
                                     "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
                                     url
                                 );
-                                return Value::String("".to_string());
+                                return Value::empty_string();
                             }
 
                             // Create client that does not follow redirects for security
