@@ -6,9 +6,15 @@ use reqwest;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(i64),
-    String(Rc<String>),
+    String(Rc<str>),
     Bool(bool),
     Array(Rc<Vec<Value>>),
+}
+
+impl Value {
+    pub fn empty_string() -> Self {
+        Value::String(Rc::from(""))
+    }
 }
 
 impl std::fmt::Display for Value {
@@ -165,14 +171,14 @@ impl Interpreter {
     fn evaluate(&mut self, expr: &Expr) -> Value {
         match expr {
             Expr::Number(n) => Value::Number(*n),
-            Expr::StringLiteral(s) => Value::String(Rc::new(s.clone())),
+            Expr::StringLiteral(s) => Value::String(Rc::from(s.as_str())),
             Expr::Identifier(name) => self.get_variable(name),
             Expr::Input => {
                 let mut input = String::new();
                 if std::io::stdin().read_line(&mut input).is_ok() {
-                    Value::String(Rc::new(input.trim().to_string()))
+                    Value::String(Rc::from(input.trim()))
                 } else {
-                    Value::String(Rc::new(String::new()))
+                    Value::empty_string()
                 }
             }
             Expr::Array(elements) => {
@@ -223,20 +229,20 @@ impl Interpreter {
                     }
                     "matn" => {
                         if let Some(val) = arg_values.first() {
-                            return Value::String(Rc::new(val.to_string()));
+                            return Value::String(Rc::from(val.to_string()));
                         }
-                        return Value::String(Rc::new("".to_string()));
+                        return Value::empty_string();
                     }
                     "turi" => {
                         if let Some(val) = arg_values.first() {
                             match val {
-                                Value::Number(_) => return Value::String(Rc::new("son".to_string())),
-                                Value::String(_) => return Value::String(Rc::new("matn".to_string())),
-                                Value::Bool(_) => return Value::String(Rc::new("mantiq".to_string())),
-                                Value::Array(_) => return Value::String(Rc::new("massiv".to_string())),
+                                Value::Number(_) => return Value::String(Rc::from("son")),
+                                Value::String(_) => return Value::String(Rc::from("matn")),
+                                Value::Bool(_) => return Value::String(Rc::from("mantiq")),
+                                Value::Array(_) => return Value::String(Rc::from("massiv")),
                             }
                         }
-                         return Value::String(Rc::new("noma'lum".to_string()));
+                         return Value::String(Rc::from("noma'lum"));
                     }
                     "uzunlik" => {
                         if let Some(val) = arg_values.first() {
@@ -265,20 +271,20 @@ impl Interpreter {
                             match reqwest::blocking::get(&url) {
                                 Ok(resp) => {
                                     match resp.text() {
-                                        Ok(text) => return Value::String(Rc::new(text)),
+                                        Ok(text) => return Value::String(Rc::from(text)),
                                         Err(e) => {
                                             eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::String(Rc::new("".to_string()));
+                                            return Value::empty_string();
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                    return Value::String(Rc::new("".to_string()));
+                                    return Value::empty_string();
                                 }
                             }
                         }
-                        return Value::String(Rc::new("".to_string()));
+                        return Value::empty_string();
                     }
                     "internet_yoz" => {
                         if arg_values.len() >= 2 {
@@ -292,20 +298,20 @@ impl Interpreter {
                                 .send() {
                                 Ok(resp) => {
                                     match resp.text() {
-                                        Ok(text) => return Value::String(Rc::new(text)),
+                                        Ok(text) => return Value::String(Rc::from(text)),
                                         Err(e) => {
                                             eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::String(Rc::new("".to_string()));
+                                            return Value::empty_string();
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                    return Value::String(Rc::new("".to_string()));
+                                    return Value::empty_string();
                                 }
                             }
                         }
-                        return Value::String(Rc::new("".to_string()));
+                        return Value::empty_string();
                     }
                     _ => {}
                 }
@@ -383,17 +389,17 @@ impl Interpreter {
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::new(format!("{}{}", l, r))),
+                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::Number(r)) => match op {
-                "+" => Value::String(Rc::new(format!("{}{}", l, r))),
+                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::new(format!("{}{}", l, r))),
+                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
