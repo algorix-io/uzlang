@@ -1,7 +1,7 @@
 use crate::parser::{Expr, Stmt};
+use reqwest;
 use std::collections::HashMap;
 use std::rc::Rc;
-use reqwest;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -40,6 +40,34 @@ impl std::fmt::Display for Value {
 pub struct Interpreter {
     env_stack: Vec<HashMap<String, Value>>,
     functions: HashMap<String, (Rc<Vec<String>>, Rc<Vec<Stmt>>)>,
+}
+
+fn is_safe_url(url_str: &str) -> bool {
+    if let Ok(url) = reqwest::Url::parse(url_str) {
+        if url.scheme() != "http" && url.scheme() != "https" {
+            return false;
+        }
+        if let Some(host) = url.host_str() {
+            if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+                return false;
+            }
+            if host.starts_with("192.168.") || host.starts_with("10.") {
+                return false;
+            }
+            if host.starts_with("172.") {
+                let parts: Vec<&str> = host.split('.').collect();
+                if parts.len() >= 2 {
+                    if let Ok(second_octet) = parts[1].parse::<u8>() {
+                        if (16..=31).contains(&second_octet) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    false
 }
 
 impl Interpreter {
@@ -155,12 +183,13 @@ impl Interpreter {
                 None
             }
             Stmt::Function(name, params, body) => {
-                self.functions.insert(name.clone(), (Rc::new(params.clone()), Rc::new(body.clone())));
+                self.functions.insert(
+                    name.clone(),
+                    (Rc::new(params.clone()), Rc::new(body.clone())),
+                );
                 None
             }
-            Stmt::Return(expr) => {
-                Some(self.evaluate(expr))
-            }
+            Stmt::Return(expr) => Some(self.evaluate(expr)),
             Stmt::Expr(expr) => {
                 self.evaluate(expr);
                 None
@@ -219,11 +248,13 @@ impl Interpreter {
                 match name.as_str() {
                     "son" => {
                         if let Some(val) = arg_values.first() {
-                             match val {
-                                Value::String(s) => return Value::Number(s.trim().parse().unwrap_or(0)),
+                            match val {
+                                Value::String(s) => {
+                                    return Value::Number(s.trim().parse().unwrap_or(0));
+                                }
                                 Value::Number(n) => return Value::Number(*n),
                                 _ => return Value::Number(0),
-                             }
+                            }
                         }
                         return Value::Number(0);
                     }
@@ -277,7 +308,7 @@ impl Interpreter {
                                             return Value::empty_string();
                                         }
                                     }
-                                }
+                                },
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                     return Value::empty_string();
@@ -291,8 +322,22 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            let client = reqwest::blocking::Client::new();
-                            match client.post(&url)
+                            if !is_safe_url(&url) {
+                                eprintln!(
+                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                    url
+                                );
+                                return Value::String("".to_string());
+                            }
+
+                            // Create client that does not follow redirects for security
+                            let client = reqwest::blocking::Client::builder()
+                                .redirect(reqwest::redirect::Policy::none())
+                                .build()
+                                .unwrap();
+
+                            match client
+                                .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
                                 .send() {
@@ -304,7 +349,7 @@ impl Interpreter {
                                             return Value::empty_string();
                                         }
                                     }
-                                }
+                                },
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                     return Value::empty_string();
