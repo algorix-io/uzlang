@@ -1,0 +1,21 @@
+yoz "Testing 127.0.0.1..."
+javob = internet_ol("http://127.0.0.1")
+yoz javob
+
+yoz "Testing Decimal IP (2130706433 -> 127.0.0.1)..."
+javob = internet_ol("http://2130706433")
+yoz javob
+
+yoz "Testing localtest.me (should point to 127.0.0.1)..."
+javob = internet_ol("http://localtest.me")
+yoz javob
+
+yoz "Testing 192.168.1.1 (should be blocked)..."
+javob = internet_ol("http://192.168.1.1")
+yoz javob
+
+yoz "Testing Google (public)..."
+javob = internet_ol("http://google.com")
+agar javob != "" {
+  yoz "Google OK"
+}
