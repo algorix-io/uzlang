@@ -37,9 +37,12 @@ impl std::fmt::Display for Value {
     }
 }
 
+// Use Rc<str> for function parameters to avoid string cloning on every function call.
+type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
+
 pub struct Interpreter {
-    env_stack: Vec<HashMap<String, Value>>,
-    functions: HashMap<String, (Rc<Vec<String>>, Rc<Vec<Stmt>>)>,
+    env_stack: Vec<HashMap<Rc<str>, Value>>,
+    functions: HashMap<String, FunctionDef>,
 }
 
 fn is_safe_url(url_str: &str) -> bool {
@@ -93,7 +96,7 @@ impl Interpreter {
         }
 
         if let Some(scope) = self.env_stack.last_mut() {
-            scope.insert(name.to_string(), val);
+            scope.insert(Rc::from(name), val);
         }
     }
 
@@ -143,10 +146,11 @@ impl Interpreter {
             Stmt::For(var_name, collection, body) => {
                 let collection_val = self.evaluate(collection);
                 if let Value::Array(elements) = collection_val {
+                    let var_name_rc: Rc<str> = Rc::from(var_name.as_str());
                     for element in elements.iter() {
                         // Create new scope for loop iteration
                         let mut scope = HashMap::new();
-                        scope.insert(var_name.clone(), element.clone());
+                        scope.insert(var_name_rc.clone(), element.clone());
                         self.env_stack.push(scope);
 
                         let ret = self.execute(body);
@@ -189,9 +193,10 @@ impl Interpreter {
                 None
             }
             Stmt::Function(name, params, body) => {
+                let params_rc: Vec<Rc<str>> = params.iter().map(|p| Rc::from(p.as_str())).collect();
                 self.functions.insert(
                     name.clone(),
-                    (Rc::new(params.clone()), Rc::new(body.clone())),
+                    (Rc::new(params_rc), Rc::new(body.clone())),
                 );
                 None
             }
