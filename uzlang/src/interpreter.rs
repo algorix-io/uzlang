@@ -1,6 +1,7 @@
 use crate::parser::{Expr, Stmt};
 use reqwest;
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,31 +43,66 @@ pub struct Interpreter {
     functions: HashMap<String, (Rc<Vec<String>>, Rc<Vec<Stmt>>)>,
 }
 
+fn is_safe_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ipv4) => {
+            let octets = ipv4.octets();
+            // Loopback 127.0.0.0/8
+            if octets[0] == 127 { return false; }
+            // Private 10.0.0.0/8
+            if octets[0] == 10 { return false; }
+            // Private 172.16.0.0/12
+            if octets[0] == 172 && (16..=31).contains(&octets[1]) { return false; }
+            // Private 192.168.0.0/16
+            if octets[0] == 192 && octets[1] == 168 { return false; }
+            // Link-local 169.254.0.0/16
+            if octets[0] == 169 && octets[1] == 254 { return false; }
+            // Current network 0.0.0.0/8
+            if octets[0] == 0 { return false; }
+            // CGNAT 100.64.0.0/10
+            if octets[0] == 100 && (64..=127).contains(&octets[1]) { return false; }
+            // Broadcast 255.255.255.255
+            if octets == [255, 255, 255, 255] { return false; }
+            true
+        },
+        std::net::IpAddr::V6(ipv6) => {
+            if ipv6.is_loopback() { return false; }
+            if ipv6.is_unspecified() { return false; }
+            let segments = ipv6.segments();
+            // Unique local fc00::/7
+            if (segments[0] & 0xfe00) == 0xfc00 { return false; }
+            // Link-local fe80::/10
+            if (segments[0] & 0xffc0) == 0xfe80 { return false; }
+            // IPv4-mapped ::ffff:0:0/96
+            if let Some(ipv4) = ipv6.to_ipv4() {
+                 return is_safe_ip(std::net::IpAddr::V4(ipv4));
+            }
+            true
+        }
+    }
+}
+
 fn is_safe_url(url_str: &str) -> bool {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
             return false;
         }
         if let Some(host) = url.host_str() {
+            // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
                 return false;
             }
             if host.starts_with("127.") {
                 return false;
             }
-            if host.starts_with("0.") {
-                return false;
-            }
-            if host.starts_with("192.168.") || host.starts_with("10.") {
-                return false;
-            }
-            if host.starts_with("172.") {
-                let parts: Vec<&str> = host.split('.').collect();
-                if parts.len() >= 2 {
-                    if let Ok(second_octet) = parts[1].parse::<u8>() {
-                        if (16..=31).contains(&second_octet) {
-                            return false;
-                        }
+            // Resolve DNS to prevent rebinding/bypasses like localtest.me
+            let port = url.port_or_known_default().unwrap_or(80);
+            let addr_str = format!("{}:{}", host, port);
+
+            if let Ok(addrs) = addr_str.to_socket_addrs() {
+                for addr in addrs {
+                    if !is_safe_ip(addr.ip()) {
+                        return false;
                     }
                 }
             }
@@ -478,5 +514,32 @@ impl Interpreter {
             Value::Number(n) => n != 0,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_safe_ip_v4() {
+        assert!(!is_safe_ip("127.0.0.1".parse().unwrap()));
+        assert!(!is_safe_ip("10.0.0.1".parse().unwrap()));
+        assert!(!is_safe_ip("192.168.1.1".parse().unwrap()));
+        assert!(!is_safe_ip("172.16.0.1".parse().unwrap()));
+        assert!(!is_safe_ip("169.254.1.1".parse().unwrap()));
+        assert!(!is_safe_ip("0.0.0.0".parse().unwrap()));
+        assert!(is_safe_ip("8.8.8.8".parse().unwrap()));
+        assert!(is_safe_ip("1.1.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_safe_ip_v6() {
+        assert!(!is_safe_ip("::1".parse().unwrap()));
+        assert!(!is_safe_ip("::".parse().unwrap()));
+        assert!(!is_safe_ip("fc00::1".parse().unwrap()));
+        assert!(!is_safe_ip("fe80::1".parse().unwrap()));
+        assert!(!is_safe_ip("::ffff:127.0.0.1".parse().unwrap()));
+        assert!(is_safe_ip("2001:db8::1".parse().unwrap()));
     }
 }
