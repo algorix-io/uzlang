@@ -40,6 +40,7 @@ impl std::fmt::Display for Value {
 pub struct Interpreter {
     env_stack: Vec<HashMap<String, Value>>,
     functions: HashMap<String, (Rc<Vec<String>>, Rc<Vec<Stmt>>)>,
+    client: reqwest::blocking::Client,
 }
 
 fn is_safe_url(url_str: &str) -> bool {
@@ -81,6 +82,10 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
+            client: reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
         }
     }
 
@@ -314,13 +319,8 @@ impl Interpreter {
                                 return Value::empty_string();
                             }
 
-                            // Create client that does not follow redirects for security
-                            let client = reqwest::blocking::Client::builder()
-                                .redirect(reqwest::redirect::Policy::none())
-                                .build()
-                                .unwrap();
-
-                            match client.get(&url).send() {
+                            // Use shared client that does not follow redirects for security
+                            match self.client.get(&url).send() {
                                 Ok(resp) => {
                                     match resp.text() {
                                         Ok(text) => return Value::String(Rc::from(text)),
@@ -351,13 +351,8 @@ impl Interpreter {
                                 return Value::empty_string();
                             }
 
-                            // Create client that does not follow redirects for security
-                            let client = reqwest::blocking::Client::builder()
-                                .redirect(reqwest::redirect::Policy::none())
-                                .build()
-                                .unwrap();
-
-                            match client
+                            // Use shared client that does not follow redirects for security
+                            match self.client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
