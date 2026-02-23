@@ -1,6 +1,7 @@
 use crate::parser::{Expr, Stmt};
 use reqwest;
 use std::collections::HashMap;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,31 +51,58 @@ fn is_safe_url(url_str: &str) -> bool {
         if url.scheme() != "http" && url.scheme() != "https" {
             return false;
         }
-        if let Some(host) = url.host_str() {
-            if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
-            }
-            if host.starts_with("127.") {
-                return false;
-            }
-            if host.starts_with("0.") {
-                return false;
-            }
-            if host.starts_with("192.168.") || host.starts_with("10.") {
-                return false;
-            }
-            if host.starts_with("172.") {
-                let parts: Vec<&str> = host.split('.').collect();
-                if parts.len() >= 2 {
-                    if let Ok(second_octet) = parts[1].parse::<u8>() {
-                        if (16..=31).contains(&second_octet) {
+
+        let port = url.port_or_known_default().unwrap_or(80);
+        let host_str = url.host_str().unwrap_or("");
+
+        // Use (host, port).to_socket_addrs() to resolve hostname
+        if let Ok(addrs) = (host_str, port).to_socket_addrs() {
+            for addr in addrs {
+                let ip = addr.ip();
+                // Check for Loopback, Private, Link Local, Unspecified
+                match ip {
+                    IpAddr::V4(ipv4) => {
+                        let octets = ipv4.octets();
+                        if ipv4.is_loopback() // 127.0.0.0/8
+                            || (octets[0] == 10) // 10.0.0.0/8
+                            || (octets[0] == 172 && (16..=31).contains(&octets[1])) // 172.16.0.0/12
+                            || (octets[0] == 192 && octets[1] == 168) // 192.168.0.0/16
+                            || ipv4.is_link_local() // 169.254.0.0/16
+                            || ipv4.is_unspecified() // 0.0.0.0
+                            || octets[0] == 0 // 0.0.0.0/8 ("This network")
+                        {
                             return false;
+                        }
+                    }
+                    IpAddr::V6(ipv6) => {
+                        if ipv6.is_loopback() // ::1
+                            || (ipv6.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7 (unique local)
+                            || (ipv6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 (link local)
+                            || ipv6.is_unspecified() // ::
+                        {
+                            return false;
+                        }
+                        // Check for IPv4-mapped IPv6 addresses (::ffff:a.b.c.d)
+                        if let Some(ipv4) = ipv6.to_ipv4() {
+                            let octets = ipv4.octets();
+                            if ipv4.is_loopback()
+                                || (octets[0] == 10)
+                                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                                || (octets[0] == 192 && octets[1] == 168)
+                                || ipv4.is_link_local()
+                                || ipv4.is_unspecified()
+                                || octets[0] == 0
+                            {
+                                return false;
+                            }
                         }
                     }
                 }
             }
+            return true;
         }
-        return true;
+        // If resolution fails, we cannot verify safety, so we block.
+        return false;
     }
     false
 }
@@ -84,6 +112,10 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
+            client: reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
         }
     }
 
@@ -319,13 +351,8 @@ impl Interpreter {
                                 return Value::empty_string();
                             }
 
-                            // Create client that does not follow redirects for security
-                            let client = reqwest::blocking::Client::builder()
-                                .redirect(reqwest::redirect::Policy::none())
-                                .build()
-                                .unwrap();
-
-                            match client.get(&url).send() {
+                            // Use shared client that does not follow redirects for security
+                            match self.client.get(&url).send() {
                                 Ok(resp) => {
                                     match resp.text() {
                                         Ok(text) => return Value::String(Rc::from(text)),
@@ -356,13 +383,8 @@ impl Interpreter {
                                 return Value::empty_string();
                             }
 
-                            // Create client that does not follow redirects for security
-                            let client = reqwest::blocking::Client::builder()
-                                .redirect(reqwest::redirect::Policy::none())
-                                .build()
-                                .unwrap();
-
-                            match client
+                            // Use shared client that does not follow redirects for security
+                            match self.client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
