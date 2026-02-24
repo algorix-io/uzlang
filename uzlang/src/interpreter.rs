@@ -1,8 +1,10 @@
 use crate::parser::{Expr, Stmt};
 use reqwest;
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -44,6 +46,7 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
+    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -107,29 +110,6 @@ fn is_safe_url(url_str: &str) -> bool {
                     if !is_safe_ip(addr.ip()) {
                         return false;
                     }
-                    IpAddr::V6(ipv6) => {
-                        if ipv6.is_loopback() // ::1
-                            || (ipv6.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7 (unique local)
-                            || (ipv6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 (link local)
-                            || ipv6.is_unspecified() // ::
-                        {
-                            return false;
-                        }
-                        // Check for IPv4-mapped IPv6 addresses (::ffff:a.b.c.d)
-                        if let Some(ipv4) = ipv6.to_ipv4() {
-                            let octets = ipv4.octets();
-                            if ipv4.is_loopback()
-                                || (octets[0] == 10)
-                                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                                || (octets[0] == 192 && octets[1] == 168)
-                                || ipv4.is_link_local()
-                                || ipv4.is_unspecified()
-                                || octets[0] == 0
-                            {
-                                return false;
-                            }
-                        }
-                    }
                 }
             }
             return true;
@@ -140,6 +120,8 @@ fn is_safe_url(url_str: &str) -> bool {
     false
 }
 
+const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
+
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
@@ -147,6 +129,7 @@ impl Interpreter {
             functions: HashMap::new(),
             client: reqwest::blocking::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap(),
         }
@@ -387,13 +370,12 @@ impl Interpreter {
                             // Use shared client that does not follow redirects for security
                             match self.client.get(&url).send() {
                                 Ok(resp) => {
-                                    match resp.text() {
-                                        Ok(text) => return Value::String(Rc::from(text)),
-                                        Err(e) => {
-                                            eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::empty_string();
-                                        }
+                                    let mut buffer = String::new();
+                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                        return Value::empty_string();
                                     }
+                                    return Value::String(Rc::from(buffer));
                                 },
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
@@ -423,13 +405,12 @@ impl Interpreter {
                                 .body(json_data)
                                 .send() {
                                 Ok(resp) => {
-                                    match resp.text() {
-                                        Ok(text) => return Value::String(Rc::from(text)),
-                                        Err(e) => {
-                                            eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::empty_string();
-                                        }
+                                    let mut buffer = String::new();
+                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                        return Value::empty_string();
                                     }
+                                    return Value::String(Rc::from(buffer));
                                 },
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
