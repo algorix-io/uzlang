@@ -44,6 +44,7 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
+    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -106,29 +107,6 @@ fn is_safe_url(url_str: &str) -> bool {
                 for addr in addrs {
                     if !is_safe_ip(addr.ip()) {
                         return false;
-                    }
-                    IpAddr::V6(ipv6) => {
-                        if ipv6.is_loopback() // ::1
-                            || (ipv6.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7 (unique local)
-                            || (ipv6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 (link local)
-                            || ipv6.is_unspecified() // ::
-                        {
-                            return false;
-                        }
-                        // Check for IPv4-mapped IPv6 addresses (::ffff:a.b.c.d)
-                        if let Some(ipv4) = ipv6.to_ipv4() {
-                            let octets = ipv4.octets();
-                            if ipv4.is_loopback()
-                                || (octets[0] == 10)
-                                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                                || (octets[0] == 192 && octets[1] == 168)
-                                || ipv4.is_link_local()
-                                || ipv4.is_unspecified()
-                                || octets[0] == 0
-                            {
-                                return false;
-                            }
-                        }
                     }
                 }
             }
@@ -212,14 +190,16 @@ impl Interpreter {
                 let collection_val = self.evaluate(collection);
                 if let Value::Array(elements) = collection_val {
                     let var_name_rc: Rc<str> = Rc::from(var_name.as_str());
+                    // Reuse scope HashMap to avoid allocation in every iteration
+                    let mut scope = HashMap::new();
+
                     for element in elements.iter() {
-                        // Create new scope for loop iteration
-                        let mut scope = HashMap::new();
+                        scope.clear();
                         scope.insert(var_name_rc.clone(), element.clone());
                         self.env_stack.push(scope);
 
                         let ret = self.execute(body);
-                        self.env_stack.pop();
+                        scope = self.env_stack.pop().expect("Stack underflow in For loop");
 
                         if let Some(val) = ret {
                             return Some(val);
