@@ -1,8 +1,10 @@
 use crate::parser::{Expr, Stmt};
 use reqwest;
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -118,6 +120,8 @@ fn is_safe_url(url_str: &str) -> bool {
     false
 }
 
+const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
+
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
@@ -125,6 +129,7 @@ impl Interpreter {
             functions: HashMap::new(),
             client: reqwest::blocking::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap(),
         }
@@ -368,13 +373,12 @@ impl Interpreter {
                             // Use shared client that does not follow redirects for security
                             match self.client.get(&url).send() {
                                 Ok(resp) => {
-                                    match resp.text() {
-                                        Ok(text) => return Value::String(Rc::from(text)),
-                                        Err(e) => {
-                                            eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::empty_string();
-                                        }
+                                    let mut buffer = String::new();
+                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                        return Value::empty_string();
                                     }
+                                    return Value::String(Rc::from(buffer));
                                 },
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
@@ -404,13 +408,12 @@ impl Interpreter {
                                 .body(json_data)
                                 .send() {
                                 Ok(resp) => {
-                                    match resp.text() {
-                                        Ok(text) => return Value::String(Rc::from(text)),
-                                        Err(e) => {
-                                            eprintln!("Xatolik: Javobni o'qishda xatolik: {}", e);
-                                            return Value::empty_string();
-                                        }
+                                    let mut buffer = String::new();
+                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                        return Value::empty_string();
                                     }
+                                    return Value::String(Rc::from(buffer));
                                 },
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
