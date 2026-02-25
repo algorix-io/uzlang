@@ -190,16 +190,17 @@ impl Interpreter {
                 let collection_val = self.evaluate(collection);
                 if let Value::Array(elements) = collection_val {
                     let var_name_rc: Rc<str> = Rc::from(var_name.as_str());
-                    // Reuse scope HashMap to avoid allocation in every iteration
+                    // Optimization: Reuse the same HashMap for scope to avoid allocation in every iteration
                     let mut scope = HashMap::new();
-
                     for element in elements.iter() {
-                        scope.clear();
                         scope.insert(var_name_rc.clone(), element.clone());
                         self.env_stack.push(scope);
 
                         let ret = self.execute(body);
-                        scope = self.env_stack.pop().expect("Stack underflow in For loop");
+                        // Retrieve the scope to reuse it
+                        scope = self.env_stack.pop().expect("Stack error in For loop");
+                        // Clear variables declared in the loop body, but keep allocation
+                        scope.clear();
 
                         if let Some(val) = ret {
                             return Some(val);
