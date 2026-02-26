@@ -7,3 +7,8 @@
 **Vulnerability:** The SSRF protection logic was partially implemented but broken, preventing compilation and potentially leaving a false sense of security. It contained redundant and syntactically incorrect checks for IPv6 addresses inside a loop.
 **Learning:** Broken security code is worse than no security code because it blocks development while offering no protection. Redundant logic (re-implementing checks that a helper function already does) increases the surface area for bugs.
 **Prevention:** Centralize security checks in helper functions (like `is_safe_ip`) and rely on them exclusively. Ensure all security features are fully implemented and tested (including compilation) before merging.
+
+## 2025-05-24 - SSRF TOCTOU Fix via DNS Pinning
+**Vulnerability:** The previous SSRF protection checked the IP address of a hostname but then allowed the HTTP client to re-resolve the hostname, creating a Time-of-Check Time-of-Use (TOCTOU) vulnerability exploitable via DNS rebinding.
+**Learning:** Checking an IP before a request is insufficient if the client library performs its own DNS resolution.
+**Prevention:** Use `reqwest::ClientBuilder::resolve` (or similar mechanisms in other libraries) to "pin" the hostname to the pre-validated IP address for the duration of the request, ensuring the checked IP is the one actually used.
