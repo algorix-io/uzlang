@@ -46,7 +46,6 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
-    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -88,36 +87,50 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_safe_url(url_str: &str) -> bool {
+fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return false;
+            return None;
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
+                return None;
             }
             if host.starts_with("127.") {
-                return false;
+                return None;
             }
-            // Resolve DNS to prevent rebinding/bypasses like localtest.me
+
+            // Resolve DNS and check ALL IPs
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
             if let Ok(addrs) = addr_str.to_socket_addrs() {
+                let mut safe_addr = None;
+
                 for addr in addrs {
                     if !is_safe_ip(addr.ip()) {
-                        return false;
+                        // If ANY resolved IP is unsafe, block the whole request
+                        // This prevents DNS rebinding attacks where one IP is safe and another isn't
+                        return None;
+                    }
+                    if safe_addr.is_none() {
+                        safe_addr = Some(addr);
                     }
                 }
+
+                if let Some(addr) = safe_addr {
+                     return reqwest::blocking::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .resolve(host, addr) // Pin DNS to the verified IP
+                        .build()
+                        .ok();
+                }
             }
-            return true;
         }
-        // If resolution fails, we cannot verify safety, so we block.
-        return false;
     }
-    false
+    None
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -127,11 +140,6 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
-            client: reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
         }
     }
 
@@ -362,28 +370,27 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            if !is_safe_url(&url) {
+                            if let Some(client) = create_safe_client(&url) {
+                                match client.get(&url).send() {
+                                    Ok(resp) => {
+                                        let mut buffer = String::new();
+                                        if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                            return Value::empty_string();
+                                        }
+                                        return Value::String(Rc::from(buffer));
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                        return Value::empty_string();
+                                    }
+                                }
+                            } else {
                                 eprintln!(
                                     "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
                                     url
                                 );
                                 return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
-                                    }
-                                    return Value::String(Rc::from(buffer));
-                                },
-                                Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                    return Value::empty_string();
-                                }
                             }
                         }
                         return Value::empty_string();
@@ -393,32 +400,31 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if !is_safe_url(&url) {
+                            if let Some(client) = create_safe_client(&url) {
+                                match client
+                                    .post(&url)
+                                    .header("Content-Type", "application/json")
+                                    .body(json_data)
+                                    .send() {
+                                    Ok(resp) => {
+                                        let mut buffer = String::new();
+                                        if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                            return Value::empty_string();
+                                        }
+                                        return Value::String(Rc::from(buffer));
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                        return Value::empty_string();
+                                    }
+                                }
+                            } else {
                                 eprintln!(
                                     "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
                                     url
                                 );
                                 return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self.client
-                                .post(&url)
-                                .header("Content-Type", "application/json")
-                                .body(json_data)
-                                .send() {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
-                                    }
-                                    return Value::String(Rc::from(buffer));
-                                },
-                                Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                    return Value::empty_string();
-                                }
                             }
                         }
                         return Value::empty_string();
