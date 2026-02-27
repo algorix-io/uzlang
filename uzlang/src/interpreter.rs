@@ -224,22 +224,36 @@ impl Interpreter {
             Stmt::AssignIndex(name, index_expr, value_expr) => {
                 let index_val = self.evaluate(index_expr);
                 let value_val = self.evaluate(value_expr);
-                let mut arr_val = self.get_variable(name);
 
-                if let Value::Array(ref mut rc_arr) = arr_val {
-                    if let Value::Number(idx) = index_val {
-                        let elements = Rc::make_mut(rc_arr);
-                        if idx >= 0 && (idx as usize) < elements.len() {
-                            elements[idx as usize] = value_val;
-                            self.set_variable(name, arr_val);
+                // Optimized Update: Find the variable scope and update in place
+                // This avoids cloning the Rc (which happens in get_variable)
+                // and allows Rc::make_mut to modify the array without cloning the vector
+                // if the ref count is 1.
+
+                let mut found = false;
+                for scope in self.env_stack.iter_mut().rev() {
+                    if let Some(val) = scope.get_mut(name as &str) {
+                        if let Value::Array(rc_arr) = val {
+                            if let Value::Number(idx) = index_val {
+                                let elements = Rc::make_mut(rc_arr);
+                                if idx >= 0 && (idx as usize) < elements.len() {
+                                    elements[idx as usize] = value_val;
+                                } else {
+                                    eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                                }
+                            } else {
+                                eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                            }
                         } else {
-                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                             eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                         }
-                    } else {
-                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                        found = true;
+                        break;
                     }
-                } else {
-                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
+                }
+
+                if !found {
+                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
                 None
             }
