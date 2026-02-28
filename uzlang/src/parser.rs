@@ -17,7 +17,7 @@ pub enum Expr {
 pub enum Stmt {
     Print(Expr),
     If(Expr, Vec<Stmt>),
-    Loop(Expr, Vec<Stmt>), // while
+    Loop(Expr, Vec<Stmt>),        // while
     For(String, Expr, Vec<Stmt>), // for
     Assign(String, Expr),
     AssignIndex(String, Expr, Expr), // name, index, value
@@ -124,7 +124,9 @@ impl Parser {
                         return Some(Stmt::For(var_name, collection, body));
                     }
                 }
-                eprintln!("Xatolik: For tsikli 'uchun <var> ichida <expr>' formatida bo'lishi kerak");
+                eprintln!(
+                    "Xatolik: For tsikli 'uchun <var> ichida <expr>' formatida bo'lishi kerak"
+                );
                 None
             }
             Token::Funksiya => {
@@ -178,12 +180,16 @@ impl Parser {
                                 if let Expr::Identifier(name) = *target {
                                     return Some(Stmt::AssignIndex(name, *index, value));
                                 } else {
-                                    eprintln!("Xatolik: Faqat o'zgaruvchilarga indeks orqali qiymat berish mumkin");
+                                    eprintln!(
+                                        "Xatolik: Faqat o'zgaruvchilarga indeks orqali qiymat berish mumkin"
+                                    );
                                     return None;
                                 }
                             }
                             _ => {
-                                eprintln!("Xatolik: Noto'g'ri o'zlashtirish, chap tarafda o'zgaruvchi bo'lishi kerak");
+                                eprintln!(
+                                    "Xatolik: Noto'g'ri o'zlashtirish, chap tarafda o'zgaruvchi bo'lishi kerak"
+                                );
                                 return None;
                             }
                         }
@@ -297,7 +303,7 @@ impl Parser {
                         self.advance(); // consume (
                         let mut args = Vec::new();
                         if self.peek() != &Token::RParen {
-                             loop {
+                            loop {
                                 if let Some(arg) = self.parse_expr() {
                                     args.push(arg);
                                 } else {
@@ -319,10 +325,10 @@ impl Parser {
                             return None;
                         }
                     } else {
-                         // Call on non-identifier (e.g. (func())()) - not supported for now as Call takes String
-                         // Or grouping? No, grouping is handled in parse_primary
-                         eprintln!("Xatolik: Faqat funksiya nomini chaqirish mumkin");
-                         return None;
+                        // Call on non-identifier (e.g. (func())()) - not supported for now as Call takes String
+                        // Or grouping? No, grouping is handled in parse_primary
+                        eprintln!("Xatolik: Faqat funksiya nomini chaqirish mumkin");
+                        return None;
                     }
                 }
                 _ => break,
