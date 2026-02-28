@@ -46,7 +46,6 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
-    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -88,36 +87,41 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_safe_url(url_str: &str) -> bool {
+fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return false;
+            return None;
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
+                return None;
             }
             if host.starts_with("127.") {
-                return false;
+                return None;
             }
             // Resolve DNS to prevent rebinding/bypasses like localtest.me
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
-            if let Ok(addrs) = addr_str.to_socket_addrs() {
-                for addr in addrs {
-                    if !is_safe_ip(addr.ip()) {
-                        return false;
-                    }
+            if let Ok(mut addrs) = addr_str.to_socket_addrs() {
+                // Find the first safe IP
+                if let Some(safe_addr) = addrs.find(|addr| is_safe_ip(addr.ip())) {
+                    // Pin the DNS resolution to this specific safe IP address to prevent TOCTOU/rebinding
+                    let client = reqwest::blocking::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .resolve(host, safe_addr)
+                        .build();
+
+                    return client.ok();
                 }
             }
-            return true;
+            return None;
         }
-        // If resolution fails, we cannot verify safety, so we block.
-        return false;
+        return None;
     }
-    false
+    None
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -127,11 +131,6 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
-            client: reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
         }
     }
 
@@ -362,16 +361,19 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Some(c) => c,
+                                None => {
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                        url
+                                    );
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
+                            // Make the request using the secured and pinned client
+                            match client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
@@ -393,16 +395,19 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Some(c) => c,
+                                None => {
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                        url
+                                    );
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client
+                            // Make the request using the secured and pinned client
+                            match client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
