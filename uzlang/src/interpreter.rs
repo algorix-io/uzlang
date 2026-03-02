@@ -46,7 +46,6 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
-    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -88,18 +87,18 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_safe_url(url_str: &str) -> bool {
+fn create_safe_client(url_str: &str) -> Result<reqwest::blocking::Client, String> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return false;
+            return Err("Faqat http va https protokollari qo'llab-quvvatlanadi".to_string());
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
+                return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
             }
             if host.starts_with("127.") {
-                return false;
+                return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
             }
             // Resolve DNS to prevent rebinding/bypasses like localtest.me
             let port = url.port_or_known_default().unwrap_or(80);
@@ -108,16 +107,24 @@ fn is_safe_url(url_str: &str) -> bool {
             if let Ok(addrs) = addr_str.to_socket_addrs() {
                 for addr in addrs {
                     if !is_safe_ip(addr.ip()) {
-                        return false;
+                        return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
                     }
+                    // Create a client that resolves the host directly to the validated IP,
+                    // preventing TOCTOU DNS rebinding.
+                    let client = reqwest::blocking::Client::builder()
+                        .resolve(host, std::net::SocketAddr::new(addr.ip(), port))
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .build()
+                        .map_err(|e| format!("Kliyent yaratishda xatolik: {}", e))?;
+                    return Ok(client);
                 }
             }
-            return true;
+            return Err("DNS ruxsat etilmadi yoki topilmadi".to_string());
         }
-        // If resolution fails, we cannot verify safety, so we block.
-        return false;
+        return Err("Xavfsizlik qoidasi buzildi - host topilmadi".to_string());
     }
-    false
+    Err("Noto'g'ri URL formati".to_string())
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -127,11 +134,6 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
-            client: reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
         }
     }
 
@@ -362,16 +364,16 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    eprintln!("Xatolik: {}", e);
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
+                            // Use newly created pinned client to prevent SSRF and DNS rebinding
+                            match client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
@@ -393,16 +395,16 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    eprintln!("Xatolik: {}", e);
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client
+                            // Use newly created pinned client to prevent SSRF and DNS rebinding
+                            match client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
