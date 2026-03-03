@@ -499,17 +499,43 @@ impl Interpreter {
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Optimize string concatenation to avoid format! macro allocation overhead
+                    if l.is_empty() {
+                        return Value::String(r);
+                    }
+                    if r.is_empty() {
+                        return Value::String(l);
+                    }
+                    let mut s = String::with_capacity(l.len() + r.len());
+                    s.push_str(&l);
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
+                }
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::Number(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Avoid format! for string + number
+                    let r_str = r.to_string();
+                    let mut s = String::with_capacity(l.len() + r_str.len());
+                    s.push_str(&l);
+                    s.push_str(&r_str);
+                    Value::String(Rc::from(s))
+                }
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Avoid format! for number + string
+                    let l_str = l.to_string();
+                    let mut s = String::with_capacity(l_str.len() + r.len());
+                    s.push_str(&l_str);
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
+                }
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
