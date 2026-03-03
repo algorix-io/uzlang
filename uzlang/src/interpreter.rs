@@ -1,5 +1,4 @@
 use crate::parser::{Expr, Stmt};
-use reqwest;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::ToSocketAddrs;
@@ -46,7 +45,6 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
-    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -54,70 +52,115 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
         std::net::IpAddr::V4(ipv4) => {
             let octets = ipv4.octets();
             // Loopback 127.0.0.0/8
-            if octets[0] == 127 { return false; }
+            if octets[0] == 127 {
+                return false;
+            }
             // Private 10.0.0.0/8
-            if octets[0] == 10 { return false; }
+            if octets[0] == 10 {
+                return false;
+            }
             // Private 172.16.0.0/12
-            if octets[0] == 172 && (16..=31).contains(&octets[1]) { return false; }
+            if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                return false;
+            }
             // Private 192.168.0.0/16
-            if octets[0] == 192 && octets[1] == 168 { return false; }
+            if octets[0] == 192 && octets[1] == 168 {
+                return false;
+            }
             // Link-local 169.254.0.0/16
-            if octets[0] == 169 && octets[1] == 254 { return false; }
+            if octets[0] == 169 && octets[1] == 254 {
+                return false;
+            }
             // Current network 0.0.0.0/8
-            if octets[0] == 0 { return false; }
+            if octets[0] == 0 {
+                return false;
+            }
             // CGNAT 100.64.0.0/10
-            if octets[0] == 100 && (64..=127).contains(&octets[1]) { return false; }
+            if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+                return false;
+            }
             // Broadcast 255.255.255.255
-            if octets == [255, 255, 255, 255] { return false; }
+            if octets == [255, 255, 255, 255] {
+                return false;
+            }
             true
-        },
+        }
         std::net::IpAddr::V6(ipv6) => {
-            if ipv6.is_loopback() { return false; }
-            if ipv6.is_unspecified() { return false; }
+            if ipv6.is_loopback() {
+                return false;
+            }
+            if ipv6.is_unspecified() {
+                return false;
+            }
             let segments = ipv6.segments();
             // Unique local fc00::/7
-            if (segments[0] & 0xfe00) == 0xfc00 { return false; }
+            if (segments[0] & 0xfe00) == 0xfc00 {
+                return false;
+            }
             // Link-local fe80::/10
-            if (segments[0] & 0xffc0) == 0xfe80 { return false; }
+            if (segments[0] & 0xffc0) == 0xfe80 {
+                return false;
+            }
             // IPv4-mapped ::ffff:0:0/96
             if let Some(ipv4) = ipv6.to_ipv4() {
-                 return is_safe_ip(std::net::IpAddr::V4(ipv4));
+                return is_safe_ip(std::net::IpAddr::V4(ipv4));
             }
             true
         }
     }
 }
 
-fn is_safe_url(url_str: &str) -> bool {
+fn create_safe_client(url_str: &str) -> Result<reqwest::blocking::Client, &'static str> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return false;
+            return Err("Xavfsizlik qoidasi buzildi - faqat HTTP/HTTPS ruxsat etilgan");
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
+                return Err(
+                    "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
+                );
             }
             if host.starts_with("127.") {
-                return false;
+                return Err(
+                    "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
+                );
             }
             // Resolve DNS to prevent rebinding/bypasses like localtest.me
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
             if let Ok(addrs) = addr_str.to_socket_addrs() {
+                let mut safe_addr = None;
                 for addr in addrs {
                     if !is_safe_ip(addr.ip()) {
-                        return false;
+                        return Err(
+                            "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
+                        );
+                    }
+                    if safe_addr.is_none() {
+                        safe_addr = Some(addr);
                     }
                 }
+
+                if let Some(addr) = safe_addr {
+                    // Pin the connection to the verified IP
+                    let client = reqwest::blocking::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .resolve(host, addr)
+                        .build()
+                        .map_err(|_| "Client yaratishda xatolik yuz berdi")?;
+                    return Ok(client);
+                }
             }
-            return true;
+            // If resolution fails or yields no addresses, we block.
+            return Err("URL manzilini aniqlab bo'lmadi");
         }
-        // If resolution fails, we cannot verify safety, so we block.
-        return false;
+        return Err("URL da host nomi yo'q");
     }
-    false
+    Err("Yaroqsiz URL formati")
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -127,11 +170,6 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
-            client: reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
         }
     }
 
@@ -245,10 +283,8 @@ impl Interpreter {
             }
             Stmt::Function(name, params, body) => {
                 let params_rc: Vec<Rc<str>> = params.iter().map(|p| Rc::from(p.as_str())).collect();
-                self.functions.insert(
-                    name.clone(),
-                    (Rc::new(params_rc), Rc::new(body.clone())),
-                );
+                self.functions
+                    .insert(name.clone(), (Rc::new(params_rc), Rc::new(body.clone())));
                 None
             }
             Stmt::Return(expr) => Some(self.evaluate(expr)),
@@ -286,18 +322,18 @@ impl Interpreter {
                 if let Value::Array(elements) = target_val {
                     if let Value::Number(idx) = index_val {
                         if idx >= 0 && (idx as usize) < elements.len() {
-                            return elements[idx as usize].clone();
+                            elements[idx as usize].clone()
                         } else {
                             eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
-                            return Value::Number(0);
+                            Value::Number(0)
                         }
                     } else {
                         eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
-                        return Value::Number(0);
+                        Value::Number(0)
                     }
                 } else {
                     eprintln!("Xatolik: Massiv indekslanishi kerak");
-                    return Value::Number(0);
+                    Value::Number(0)
                 }
             }
             Expr::Call(name, args) => {
@@ -335,7 +371,7 @@ impl Interpreter {
                                 Value::Array(_) => return Value::String(Rc::from("massiv")),
                             }
                         }
-                         return Value::String(Rc::from("noma'lum"));
+                        return Value::String(Rc::from("noma'lum"));
                     }
                     "uzunlik" => {
                         if let Some(val) = arg_values.first() {
@@ -348,13 +384,15 @@ impl Interpreter {
                     "qosh" => {
                         // qosh(arr, val) -> returns new array
                         if arg_values.len() >= 2 {
-                             if let Value::Array(rc_arr) = &arg_values[0] {
-                                 let mut arr = (**rc_arr).clone();
-                                 arr.push(arg_values[1].clone());
-                                 return Value::Array(Rc::new(arr));
-                             } else {
-                                 eprintln!("Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak");
-                             }
+                            if let Value::Array(rc_arr) = &arg_values[0] {
+                                let mut arr = (**rc_arr).clone();
+                                arr.push(arg_values[1].clone());
+                                return Value::Array(Rc::new(arr));
+                            } else {
+                                eprintln!(
+                                    "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
+                                );
+                            }
                         }
                         return Value::Number(0);
                     }
@@ -362,24 +400,28 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let safe_client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(err_msg) => {
+                                    eprintln!("Xatolik: {}", err_msg);
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
+                            // Use the securely pinned client for the request
+                            match safe_client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
-                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                    if resp
+                                        .take(MAX_RESPONSE_SIZE)
+                                        .read_to_string(&mut buffer)
+                                        .is_err()
+                                    {
                                         eprintln!("Xatolik: Javobni o'qishda xatolik");
                                         return Value::empty_string();
                                     }
                                     return Value::String(Rc::from(buffer));
-                                },
+                                }
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                     return Value::empty_string();
@@ -393,28 +435,33 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let safe_client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(err_msg) => {
+                                    eprintln!("Xatolik: {}", err_msg);
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client
+                            // Use the securely pinned client for the request
+                            match safe_client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
-                                .send() {
+                                .send()
+                            {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
-                                    if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
+                                    if resp
+                                        .take(MAX_RESPONSE_SIZE)
+                                        .read_to_string(&mut buffer)
+                                        .is_err()
+                                    {
                                         eprintln!("Xatolik: Javobni o'qishda xatolik");
                                         return Value::empty_string();
                                     }
                                     return Value::String(Rc::from(buffer));
-                                },
+                                }
                                 Err(e) => {
                                     eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                     return Value::empty_string();
