@@ -96,10 +96,9 @@ fn create_safe_client(url_str: &str) -> Result<(reqwest::blocking::Client, reqwe
 
     let host = parsed_url.host_str().ok_or("URL da host ko'rsatilmagan")?;
     let port = parsed_url.port_or_known_default().unwrap_or(80);
-    let addr_str = format!("{}:{}", host, port);
 
     // Resolve DNS manually
-    let addrs: Vec<std::net::SocketAddr> = addr_str.to_socket_addrs()
+    let addrs: Vec<std::net::SocketAddr> = (host, port).to_socket_addrs()
         .map_err(|e| format!("DNS ni aniqlab bo'lmadi: {}", e))?
         .collect();
 
