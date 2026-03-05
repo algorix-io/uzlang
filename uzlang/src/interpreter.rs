@@ -53,34 +53,58 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
         std::net::IpAddr::V4(ipv4) => {
             let octets = ipv4.octets();
             // Loopback 127.0.0.0/8
-            if octets[0] == 127 { return false; }
+            if octets[0] == 127 {
+                return false;
+            }
             // Private 10.0.0.0/8
-            if octets[0] == 10 { return false; }
+            if octets[0] == 10 {
+                return false;
+            }
             // Private 172.16.0.0/12
-            if octets[0] == 172 && (16..=31).contains(&octets[1]) { return false; }
+            if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                return false;
+            }
             // Private 192.168.0.0/16
-            if octets[0] == 192 && octets[1] == 168 { return false; }
+            if octets[0] == 192 && octets[1] == 168 {
+                return false;
+            }
             // Link-local 169.254.0.0/16
-            if octets[0] == 169 && octets[1] == 254 { return false; }
+            if octets[0] == 169 && octets[1] == 254 {
+                return false;
+            }
             // Current network 0.0.0.0/8
-            if octets[0] == 0 { return false; }
+            if octets[0] == 0 {
+                return false;
+            }
             // CGNAT 100.64.0.0/10
-            if octets[0] == 100 && (64..=127).contains(&octets[1]) { return false; }
+            if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+                return false;
+            }
             // Broadcast 255.255.255.255
-            if octets == [255, 255, 255, 255] { return false; }
+            if octets == [255, 255, 255, 255] {
+                return false;
+            }
             true
-        },
+        }
         std::net::IpAddr::V6(ipv6) => {
-            if ipv6.is_loopback() { return false; }
-            if ipv6.is_unspecified() { return false; }
+            if ipv6.is_loopback() {
+                return false;
+            }
+            if ipv6.is_unspecified() {
+                return false;
+            }
             let segments = ipv6.segments();
             // Unique local fc00::/7
-            if (segments[0] & 0xfe00) == 0xfc00 { return false; }
+            if (segments[0] & 0xfe00) == 0xfc00 {
+                return false;
+            }
             // Link-local fe80::/10
-            if (segments[0] & 0xffc0) == 0xfe80 { return false; }
+            if (segments[0] & 0xffc0) == 0xfe80 {
+                return false;
+            }
             // IPv4-mapped ::ffff:0:0/96
             if let Some(ipv4) = ipv6.to_ipv4() {
-                 return is_safe_ip(std::net::IpAddr::V4(ipv4));
+                return is_safe_ip(std::net::IpAddr::V4(ipv4));
             }
             true
         }
@@ -232,31 +256,43 @@ impl Interpreter {
             Stmt::AssignIndex(name, index_expr, value_expr) => {
                 let index_val = self.evaluate(index_expr);
                 let value_val = self.evaluate(value_expr);
-                let mut arr_val = self.get_variable(name);
 
-                if let Value::Array(ref mut rc_arr) = arr_val {
-                    if let Value::Number(idx) = index_val {
-                        let elements = Rc::make_mut(rc_arr);
-                        if idx >= 0 && (idx as usize) < elements.len() {
-                            elements[idx as usize] = value_val;
-                            self.set_variable(name, arr_val);
+                // Optimized Update: Find the variable scope and update in place
+                // This avoids cloning the Rc (which happens in get_variable)
+                // and allows Rc::make_mut to modify the array without cloning the vector
+                // if the ref count is 1.
+
+                let mut found = false;
+                for scope in self.env_stack.iter_mut().rev() {
+                    if let Some(val) = scope.get_mut(name as &str) {
+                        if let Value::Array(rc_arr) = val {
+                            if let Value::Number(idx) = index_val {
+                                let elements = Rc::make_mut(rc_arr);
+                                if idx >= 0 && (idx as usize) < elements.len() {
+                                    elements[idx as usize] = value_val;
+                                } else {
+                                    eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                                }
+                            } else {
+                                eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                            }
                         } else {
-                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                             eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                         }
-                    } else {
-                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                        found = true;
+                        break;
                     }
-                } else {
-                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
+                }
+
+                if !found {
+                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
                 None
             }
             Stmt::Function(name, params, body) => {
                 let params_rc: Vec<Rc<str>> = params.iter().map(|p| Rc::from(p.as_str())).collect();
-                self.functions.insert(
-                    name.clone(),
-                    (Rc::new(params_rc), Rc::new(body.clone())),
-                );
+                self.functions
+                    .insert(name.clone(), (Rc::new(params_rc), Rc::new(body.clone())));
                 None
             }
             Stmt::Return(expr) => Some(self.evaluate(expr)),
@@ -343,7 +379,7 @@ impl Interpreter {
                                 Value::Array(_) => return Value::String(Rc::from("massiv")),
                             }
                         }
-                         return Value::String(Rc::from("noma'lum"));
+                        return Value::String(Rc::from("noma'lum"));
                     }
                     "uzunlik" => {
                         if let Some(val) = arg_values.first() {
@@ -356,13 +392,15 @@ impl Interpreter {
                     "qosh" => {
                         // qosh(arr, val) -> returns new array
                         if arg_values.len() >= 2 {
-                             if let Value::Array(rc_arr) = &arg_values[0] {
-                                 let mut arr = (**rc_arr).clone();
-                                 arr.push(arg_values[1].clone());
-                                 return Value::Array(Rc::new(arr));
-                             } else {
-                                 eprintln!("Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak");
-                             }
+                            if let Value::Array(rc_arr) = &arg_values[0] {
+                                let mut arr = (**rc_arr).clone();
+                                arr.push(arg_values[1].clone());
+                                return Value::Array(Rc::new(arr));
+                            } else {
+                                eprintln!(
+                                    "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
+                                );
+                            }
                         }
                         return Value::Number(0);
                     }
@@ -397,7 +435,7 @@ impl Interpreter {
                     }
                     "internet_yoz" => {
                         if arg_values.len() >= 2 {
-                            let url = arg_values[0].to_string();
+                            let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
                             if let Some(client) = create_safe_client(&url) {
@@ -505,17 +543,52 @@ impl Interpreter {
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Optimize string concatenation to avoid format! overhead
+                    // and unnecessary allocations for empty strings
+                    if l.is_empty() {
+                        Value::String(r)
+                    } else if r.is_empty() {
+                        Value::String(l)
+                    } else {
+                        let mut s = String::with_capacity(l.len() + r.len());
+                        s.push_str(&l);
+                        s.push_str(&r);
+                        Value::String(Rc::from(s))
+                    }
+                }
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::Number(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Optimize string + number concatenation
+                    if l.is_empty() {
+                        Value::String(Rc::from(r.to_string()))
+                    } else {
+                        let r_str = r.to_string();
+                        let mut s = String::with_capacity(l.len() + r_str.len());
+                        s.push_str(&l);
+                        s.push_str(&r_str);
+                        Value::String(Rc::from(s))
+                    }
+                }
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Optimize number + string concatenation
+                    if r.is_empty() {
+                        Value::String(Rc::from(l.to_string()))
+                    } else {
+                        let l_str = l.to_string();
+                        let mut s = String::with_capacity(l_str.len() + r.len());
+                        s.push_str(&l_str);
+                        s.push_str(&r);
+                        Value::String(Rc::from(s))
+                    }
+                }
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
