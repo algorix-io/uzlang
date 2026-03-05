@@ -46,7 +46,6 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
-    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -112,36 +111,64 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_safe_url(url_str: &str) -> bool {
+fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return false;
+            return None;
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
+                return None;
             }
             if host.starts_with("127.") {
-                return false;
+                return None;
             }
+
             // Resolve DNS to prevent rebinding/bypasses like localtest.me
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
+            let mut safe_addr = None;
             if let Ok(addrs) = addr_str.to_socket_addrs() {
+                let mut safe_addr = None;
+
                 for addr in addrs {
-                    if !is_safe_ip(addr.ip()) {
-                        return false;
+                    if is_safe_ip(addr.ip()) {
+                        safe_addr = Some(addr);
+                        break;
+                    } else {
+                        return None; // If any resolved IP is unsafe, reject
                     }
                 }
+
+                if let Some(addr) = safe_addr {
+                     return reqwest::blocking::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .resolve(host, addr) // Pin DNS to the verified IP
+                        .build()
+                        .ok();
+                }
             }
-            return true;
+
+            if let Some(addr) = safe_addr {
+                // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
+                if let Ok(client) = reqwest::blocking::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .timeout(Duration::from_secs(10))
+                    .resolve(host, addr)
+                    .build()
+                {
+                    return Some(client);
+                }
+            }
+            return None;
         }
         // If resolution fails, we cannot verify safety, so we block.
-        return false;
+        return None;
     }
-    false
+    None
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -151,11 +178,6 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
-            client: reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
         }
     }
 
@@ -248,23 +270,36 @@ impl Interpreter {
             Stmt::AssignIndex(name, index_expr, value_expr) => {
                 let index_val = self.evaluate(index_expr);
                 let value_val = self.evaluate(value_expr);
-                let mut arr_val = self.get_variable(name);
 
-                if let Value::Array(ref mut rc_arr) = arr_val {
-                    if let Value::Number(idx) = index_val {
-                        let elements = Rc::make_mut(rc_arr);
-                        if idx >= 0 && (idx as usize) < elements.len() {
-                            elements[idx as usize] = value_val;
-                            self.set_variable(name, arr_val);
+                let mut found = false;
+                for scope in self.env_stack.iter_mut().rev() {
+                    if let Some(val) = scope.get_mut(name.as_str()) {
+                        found = true;
+                        if let Value::Array(rc_arr) = val {
+                            if let Value::Number(idx) = index_val {
+                                // Performance: Since we accessed `val` by mutable reference and didn't
+                                // call get_variable() which clones it, the Rc count remains 1 for unshared arrays.
+                                // Rc::make_mut therefore runs in O(1) time without cloning the entire array!
+                                let elements = Rc::make_mut(rc_arr);
+                                if idx >= 0 && (idx as usize) < elements.len() {
+                                    elements[idx as usize] = value_val;
+                                } else {
+                                    eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                                }
+                            } else {
+                                eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                            }
                         } else {
-                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                            eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                         }
-                    } else {
-                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                        break;
                     }
-                } else {
-                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                 }
+
+                if !found {
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
+                }
+
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -386,16 +421,18 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Some(c) => c,
+                                None => {
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                        url
+                                    );
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
+                            match client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp
@@ -418,16 +455,19 @@ impl Interpreter {
                     }
                     "internet_yoz" => {
                         if arg_values.len() >= 2 {
-                            let url = arg_values[0].to_string();
+                            let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Some(c) => c,
+                                None => {
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                        url
+                                    );
+                                    return Value::empty_string();
+                                }
+                            };
 
                             // Use shared client that does not follow redirects for security
                             match self
