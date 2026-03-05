@@ -257,16 +257,15 @@ impl Interpreter {
                 let index_val = self.evaluate(index_expr);
                 let value_val = self.evaluate(value_expr);
 
-                // Optimized Update: Find the variable scope and update in place
-                // This avoids cloning the Rc (which happens in get_variable)
-                // and allows Rc::make_mut to modify the array without cloning the vector
-                // if the ref count is 1.
-
                 let mut found = false;
                 for scope in self.env_stack.iter_mut().rev() {
-                    if let Some(val) = scope.get_mut(name as &str) {
+                    if let Some(val) = scope.get_mut(name.as_str()) {
+                        found = true;
                         if let Value::Array(rc_arr) = val {
                             if let Value::Number(idx) = index_val {
+                                // Performance: Since we accessed `val` by mutable reference and didn't
+                                // call get_variable() which clones it, the Rc count remains 1 for unshared arrays.
+                                // Rc::make_mut therefore runs in O(1) time without cloning the entire array!
                                 let elements = Rc::make_mut(rc_arr);
                                 if idx >= 0 && (idx as usize) < elements.len() {
                                     elements[idx as usize] = value_val;
@@ -277,16 +276,16 @@ impl Interpreter {
                                 eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
                             }
                         } else {
-                             eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
+                            eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                         }
-                        found = true;
                         break;
                     }
                 }
 
                 if !found {
-                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
+
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -430,6 +429,26 @@ impl Interpreter {
                                 );
                                 return Value::empty_string();
                             }
+
+                            // Use shared client that does not follow redirects for security
+                            match self.client.get(&url).send() {
+                                Ok(resp) => {
+                                    let mut buffer = String::new();
+                                    if resp
+                                        .take(MAX_RESPONSE_SIZE)
+                                        .read_to_string(&mut buffer)
+                                        .is_err()
+                                    {
+                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                        return Value::empty_string();
+                                    }
+                                    return Value::String(Rc::from(buffer));
+                                }
+                                Err(e) => {
+                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    return Value::empty_string();
+                                }
+                            }
                         }
                         return Value::empty_string();
                     }
@@ -463,6 +482,32 @@ impl Interpreter {
                                     url
                                 );
                                 return Value::empty_string();
+                            }
+
+                            // Use shared client that does not follow redirects for security
+                            match self
+                                .client
+                                .post(&url)
+                                .header("Content-Type", "application/json")
+                                .body(json_data)
+                                .send()
+                            {
+                                Ok(resp) => {
+                                    let mut buffer = String::new();
+                                    if resp
+                                        .take(MAX_RESPONSE_SIZE)
+                                        .read_to_string(&mut buffer)
+                                        .is_err()
+                                    {
+                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                        return Value::empty_string();
+                                    }
+                                    return Value::String(Rc::from(buffer));
+                                }
+                                Err(e) => {
+                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    return Value::empty_string();
+                                }
                             }
                         }
                         return Value::empty_string();
