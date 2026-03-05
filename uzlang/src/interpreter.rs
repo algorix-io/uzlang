@@ -251,16 +251,16 @@ impl Interpreter {
                 let index_val = self.evaluate(index_expr);
                 let value_val = self.evaluate(value_expr);
 
-                // Optimization: Modify array in-place to avoid cloning when Rc count is 1.
-                // We iterate scopes to find the variable and modify it directly.
+                // Optimized Update: Find the variable scope and update in place
+                // This avoids cloning the Rc (which happens in get_variable)
+                // and allows Rc::make_mut to modify the array without cloning the vector
+                // if the ref count is 1.
+
                 let mut found = false;
                 for scope in self.env_stack.iter_mut().rev() {
-                    if let Some(val) = scope.get_mut(name.as_str()) {
+                    if let Some(val) = scope.get_mut(name as &str) {
                         if let Value::Array(rc_arr) = val {
                             if let Value::Number(idx) = index_val {
-                                // Rc::make_mut checks reference count.
-                                // If count == 1 (not shared), it returns &mut Vec without cloning.
-                                // If count > 1 (shared), it clones the Vec (COW).
                                 let elements = Rc::make_mut(rc_arr);
                                 if idx >= 0 && (idx as usize) < elements.len() {
                                     elements[idx as usize] = value_val;
@@ -271,7 +271,7 @@ impl Interpreter {
                                 eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
                             }
                         } else {
-                            eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
+                             eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                         }
                         found = true;
                         break;
@@ -279,20 +279,7 @@ impl Interpreter {
                 }
 
                 if !found {
-                    // Fallback or error if variable not found.
-                    // But maybe it's implicitly global or handled via get_variable returning 0?
-                    // Original code: get_variable returns 0 if not found.
-                    // Then logic checks if it's Array. 0 is Number.
-                    // So original code printed "Xatolik: O'zgaruvchi massiv emas" (because 0 is not Array).
-                    // Or actually get_variable returns Value::Number(0).
-                    // Logic checks `if let Value::Array(...)`. It fails.
-                    // Else block prints "Xatolik: O'zgaruvchi massiv emas".
-                    // So "O'zgaruvchi topilmadi" is a better error message, but strictly speaking
-                    // get_variable returns 0 for undefined vars.
-                    // If we stick to strict compatibility:
-                    // If not found, it's effectively 0. 0 is not array.
-                    // So we print "Xatolik: O'zgaruvchi massiv emas: name".
-                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
+                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
                 None
             }
