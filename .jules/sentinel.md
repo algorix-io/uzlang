@@ -8,7 +8,7 @@
 **Learning:** Broken security code is worse than no security code because it blocks development while offering no protection. Redundant logic (re-implementing checks that a helper function already does) increases the surface area for bugs.
 **Prevention:** Centralize security checks in helper functions (like `is_safe_ip`) and rely on them exclusively. Ensure all security features are fully implemented and tested (including compilation) before merging.
 
-## 2025-03-05 - Fixing SSRF TOCTOU with DNS Pinning
-**Vulnerability:** Even though URLs were validated to ensure they resolve to safe IPs, a TOCTOU (Time-of-Check Time-of-Use) vulnerability existed. The initial check resolved the DNS, but `reqwest::blocking::Client` would re-resolve the domain name upon connection. A malicious server could respond with a safe IP during validation and a local/private IP during the actual request (DNS rebinding).
-**Learning:** Checking host resolution ahead of the connection is insufficient if the client subsequently performs its own DNS resolution, which could yield a different result.
-**Prevention:** Pin the DNS resolution when constructing the request client using `reqwest::blocking::Client::builder().resolve(host, safe_addr)`. This forces the client to use the exact IP address validated earlier, completely mitigating the DNS rebinding threat.
+## 2025-05-24 - SSRF TOCTOU Fix via DNS Pinning
+**Vulnerability:** The previous SSRF protection checked the IP address of a hostname but then allowed the HTTP client to re-resolve the hostname, creating a Time-of-Check Time-of-Use (TOCTOU) vulnerability exploitable via DNS rebinding.
+**Learning:** Checking an IP before a request is insufficient if the client library performs its own DNS resolution.
+**Prevention:** Use `reqwest::ClientBuilder::resolve` (or similar mechanisms in other libraries) to "pin" the hostname to the pre-validated IP address for the duration of the request, ensuring the checked IP is the one actually used.
