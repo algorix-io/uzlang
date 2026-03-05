@@ -125,21 +125,20 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
                 return None;
             }
 
-            // Resolve DNS and check ALL IPs
+            // Resolve DNS to prevent rebinding/bypasses like localtest.me
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
+            let mut safe_addr = None;
             if let Ok(addrs) = addr_str.to_socket_addrs() {
                 let mut safe_addr = None;
 
                 for addr in addrs {
-                    if !is_safe_ip(addr.ip()) {
-                        // If ANY resolved IP is unsafe, block the whole request
-                        // This prevents DNS rebinding attacks where one IP is safe and another isn't
-                        return None;
-                    }
-                    if safe_addr.is_none() {
+                    if is_safe_ip(addr.ip()) {
                         safe_addr = Some(addr);
+                        break;
+                    } else {
+                        return None; // If any resolved IP is unsafe, reject
                     }
                 }
 
@@ -152,7 +151,22 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
                         .ok();
                 }
             }
+
+            if let Some(addr) = safe_addr {
+                // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
+                if let Ok(client) = reqwest::blocking::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .timeout(Duration::from_secs(10))
+                    .resolve(host, addr)
+                    .build()
+                {
+                    return Some(client);
+                }
+            }
+            return None;
         }
+        // If resolution fails, we cannot verify safety, so we block.
+        return None;
     }
     None
 }
@@ -407,31 +421,18 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            if let Some(client) = create_safe_client(&url) {
-                                match client.get(&url).send() {
-                                    Ok(resp) => {
-                                        let mut buffer = String::new();
-                                        if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
-                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                            return Value::empty_string();
-                                        }
-                                        return Value::String(Rc::from(buffer));
-                                    },
-                                    Err(e) => {
-                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                        return Value::empty_string();
-                                    }
+                            let client = match create_safe_client(&url) {
+                                Some(c) => c,
+                                None => {
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                        url
+                                    );
+                                    return Value::empty_string();
                                 }
-                            } else {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
+                            match client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp
@@ -457,36 +458,18 @@ impl Interpreter {
                             let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if let Some(client) = create_safe_client(&url) {
-                                match client
-                                    .post(&url)
-                                    .header("Content-Type", "application/json")
-                                    .body(json_data)
-                                    .send() {
-                                    Ok(resp) => {
-                                        let mut buffer = String::new();
-                                        if resp.take(MAX_RESPONSE_SIZE).read_to_string(&mut buffer).is_err() {
-                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                            return Value::empty_string();
-                                        }
-                                        return Value::String(Rc::from(buffer));
-                                    },
-                                    Err(e) => {
-                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
-                                        return Value::empty_string();
-                                    }
+                            let client = match create_safe_client(&url) {
+                                Some(c) => c,
+                                None => {
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
+                                        url
+                                    );
+                                    return Value::empty_string();
                                 }
-                            } else {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self
-                                .client
+                            match client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
