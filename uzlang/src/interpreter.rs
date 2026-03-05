@@ -469,7 +469,9 @@ impl Interpreter {
                                 }
                             };
 
-                            match client
+                            // Use shared client that does not follow redirects for security
+                            match self
+                                .client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
@@ -572,18 +574,18 @@ impl Interpreter {
             },
             (Value::String(l), Value::String(r)) => match op {
                 "+" => {
-                    // Bolt: Optimize string concatenation to avoid format! overhead
-                    // and unnecessary allocations for empty strings
+                    // Bolt: Avoid formatting and allocating if one string is empty
                     if l.is_empty() {
-                        Value::String(r)
-                    } else if r.is_empty() {
-                        Value::String(l)
-                    } else {
-                        let mut s = String::with_capacity(l.len() + r.len());
-                        s.push_str(&l);
-                        s.push_str(&r);
-                        Value::String(Rc::from(s))
+                        return Value::String(r);
                     }
+                    if r.is_empty() {
+                        return Value::String(l);
+                    }
+                    // Bolt: Pre-allocate String capacity to avoid reallocation
+                    let mut s = String::with_capacity(l.len() + r.len());
+                    s.push_str(&l);
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
                 }
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
@@ -591,31 +593,21 @@ impl Interpreter {
             },
             (Value::String(l), Value::Number(r)) => match op {
                 "+" => {
-                    // Bolt: Optimize string + number concatenation
-                    if l.is_empty() {
-                        Value::String(Rc::from(r.to_string()))
-                    } else {
-                        let r_str = r.to_string();
-                        let mut s = String::with_capacity(l.len() + r_str.len());
-                        s.push_str(&l);
-                        s.push_str(&r_str);
-                        Value::String(Rc::from(s))
-                    }
+                    use std::fmt::Write;
+                    let mut s = String::with_capacity(l.len() + 20); // Pre-allocate with enough space for i64
+                    s.push_str(&l);
+                    let _ = write!(s, "{}", r); // avoid format!
+                    Value::String(Rc::from(s))
                 }
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
                 "+" => {
-                    // Bolt: Optimize number + string concatenation
-                    if r.is_empty() {
-                        Value::String(Rc::from(l.to_string()))
-                    } else {
-                        let l_str = l.to_string();
-                        let mut s = String::with_capacity(l_str.len() + r.len());
-                        s.push_str(&l_str);
-                        s.push_str(&r);
-                        Value::String(Rc::from(s))
-                    }
+                    use std::fmt::Write;
+                    let mut s = String::with_capacity(20 + r.len());
+                    let _ = write!(s, "{}", l); // avoid format!
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
                 }
                 _ => Value::Bool(false),
             },
