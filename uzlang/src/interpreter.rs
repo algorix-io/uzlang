@@ -129,38 +129,30 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
-            let mut safe_addr = None;
             if let Ok(addrs) = addr_str.to_socket_addrs() {
-                let mut safe_addr = None;
+                let mut first_safe_addr = None;
+                let mut all_safe = true;
 
                 for addr in addrs {
-                    if is_safe_ip(addr.ip()) {
-                        safe_addr = Some(addr);
-                        break;
-                    } else {
-                        return None; // If any resolved IP is unsafe, reject
+                    if !is_safe_ip(addr.ip()) {
+                        all_safe = false;
+                        break; // Reject if ANY resolved IP is unsafe
+                    }
+                    if first_safe_addr.is_none() {
+                        first_safe_addr = Some(addr);
                     }
                 }
 
-                if let Some(addr) = safe_addr {
-                     return reqwest::blocking::Client::builder()
-                        .redirect(reqwest::redirect::Policy::none())
-                        .timeout(Duration::from_secs(10))
-                        .resolve(host, addr) // Pin DNS to the verified IP
-                        .build()
-                        .ok();
-                }
-            }
-
-            if let Some(addr) = safe_addr {
-                // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
-                if let Ok(client) = reqwest::blocking::Client::builder()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(Duration::from_secs(10))
-                    .resolve(host, addr)
-                    .build()
-                {
-                    return Some(client);
+                if all_safe {
+                    if let Some(addr) = first_safe_addr {
+                        // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
+                        return reqwest::blocking::Client::builder()
+                            .redirect(reqwest::redirect::Policy::none())
+                            .timeout(Duration::from_secs(10))
+                            .resolve(host, addr) // Pin DNS to the verified IP
+                            .build()
+                            .ok();
+                    }
                 }
             }
             return None;
@@ -455,7 +447,7 @@ impl Interpreter {
                     }
                     "internet_yoz" => {
                         if arg_values.len() >= 2 {
-                            let url_str = arg_values[0].to_string();
+                            let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
                             let client = match create_safe_client(&url) {
@@ -469,9 +461,7 @@ impl Interpreter {
                                 }
                             };
 
-                            // Use shared client that does not follow redirects for security
-                            match self
-                                .client
+                            match client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
