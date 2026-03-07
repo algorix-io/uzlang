@@ -129,26 +129,30 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
-            if let Ok(mut addrs) = addr_str.to_socket_addrs() {
-                // Find the first safe IP
-                if let Some(safe_addr) = addrs.find(|addr| is_safe_ip(addr.ip())) {
-                    // Pin the DNS resolution to this specific safe IP address to prevent TOCTOU/rebinding
-                    let client = reqwest::blocking::Client::builder()
-                        .redirect(reqwest::redirect::Policy::none())
-                        .timeout(Duration::from_secs(10))
-                        .resolve(host, safe_addr)
-                        .build();
+            if let Ok(addrs) = addr_str.to_socket_addrs() {
+                let mut first_safe_addr = None;
+                let mut all_safe = true;
 
-                    return client.ok();
+                for addr in addrs {
+                    if !is_safe_ip(addr.ip()) {
+                        all_safe = false;
+                        break; // Reject if ANY resolved IP is unsafe
+                    }
+                    if first_safe_addr.is_none() {
+                        first_safe_addr = Some(addr);
+                    }
                 }
 
-                if let Some(addr) = safe_addr {
-                    return reqwest::blocking::Client::builder()
-                        .redirect(reqwest::redirect::Policy::none())
-                        .timeout(Duration::from_secs(10))
-                        .resolve(host, addr) // Pin DNS to the verified IP
-                        .build()
-                        .ok();
+                if all_safe {
+                    if let Some(addr) = first_safe_addr {
+                        // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
+                        return reqwest::blocking::Client::builder()
+                            .redirect(reqwest::redirect::Policy::none())
+                            .timeout(Duration::from_secs(10))
+                            .resolve(host, addr) // Pin DNS to the verified IP
+                            .build()
+                            .ok();
+                    }
                 }
             }
             return None;
@@ -453,7 +457,7 @@ impl Interpreter {
                     }
                     "internet_yoz" => {
                         if arg_values.len() >= 2 {
-                            let url_str = arg_values[0].to_string();
+                            let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
                             let client = match create_safe_client(&url) {
@@ -467,7 +471,6 @@ impl Interpreter {
                                 }
                             };
 
-                            // Make the request using the secured and pinned client
                             match client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
