@@ -1,5 +1,4 @@
 use crate::parser::{Expr, Stmt};
-use reqwest;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::ToSocketAddrs;
@@ -248,23 +247,36 @@ impl Interpreter {
             Stmt::AssignIndex(name, index_expr, value_expr) => {
                 let index_val = self.evaluate(index_expr);
                 let value_val = self.evaluate(value_expr);
-                let mut arr_val = self.get_variable(name);
 
-                if let Value::Array(ref mut rc_arr) = arr_val {
-                    if let Value::Number(idx) = index_val {
-                        let elements = Rc::make_mut(rc_arr);
-                        if idx >= 0 && (idx as usize) < elements.len() {
-                            elements[idx as usize] = value_val;
-                            self.set_variable(name, arr_val);
+                let mut found = false;
+                for scope in self.env_stack.iter_mut().rev() {
+                    if let Some(val) = scope.get_mut(name.as_str()) {
+                        found = true;
+                        if let Value::Array(rc_arr) = val {
+                            if let Value::Number(idx) = index_val {
+                                let elements = Rc::make_mut(rc_arr);
+                                if idx >= 0 && (idx as usize) < elements.len() {
+                                    elements[idx as usize] = value_val;
+                                } else {
+                                    eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                                }
+                            } else {
+                                eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                            }
                         } else {
-                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                            eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                         }
-                    } else {
-                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                        break;
                     }
-                } else {
-                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                 }
+                if !found {
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
+                }
+
+                if !found {
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
+                }
+
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -295,7 +307,8 @@ impl Interpreter {
                 }
             }
             Expr::Array(elements) => {
-                let mut values = Vec::new();
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
+                let mut values = Vec::with_capacity(elements.len());
                 for e in elements {
                     values.push(self.evaluate(e));
                 }
@@ -308,22 +321,23 @@ impl Interpreter {
                 if let Value::Array(elements) = target_val {
                     if let Value::Number(idx) = index_val {
                         if idx >= 0 && (idx as usize) < elements.len() {
-                            return elements[idx as usize].clone();
+                            elements[idx as usize].clone()
                         } else {
                             eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
-                            return Value::Number(0);
+                            Value::Number(0)
                         }
                     } else {
                         eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
-                        return Value::Number(0);
+                        Value::Number(0)
                     }
                 } else {
                     eprintln!("Xatolik: Massiv indekslanishi kerak");
-                    return Value::Number(0);
+                    Value::Number(0)
                 }
             }
             Expr::Call(name, args) => {
-                let mut arg_values = Vec::new();
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
+                let mut arg_values = Vec::with_capacity(args.len());
                 for arg in args {
                     arg_values.push(self.evaluate(arg));
                 }
@@ -467,7 +481,8 @@ impl Interpreter {
                     let body = Rc::clone(body);
 
                     // Create new scope
-                    let mut scope = HashMap::new();
+                    // Bolt: Pre-allocate HashMap capacity to avoid reallocation for function scopes
+                    let mut scope = HashMap::with_capacity(params.len());
                     for (i, param) in params.iter().enumerate() {
                         if let Some(val) = arg_values.get(i) {
                             scope.insert(param.clone(), val.clone());
@@ -534,17 +549,43 @@ impl Interpreter {
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Optimize string concatenation to avoid format! macro allocation overhead
+                    if l.is_empty() {
+                        return Value::String(r);
+                    }
+                    if r.is_empty() {
+                        return Value::String(l);
+                    }
+                    let mut s = String::with_capacity(l.len() + r.len());
+                    s.push_str(&l);
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
+                }
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::Number(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Avoid format! for string + number
+                    let r_str = r.to_string();
+                    let mut s = String::with_capacity(l.len() + r_str.len());
+                    s.push_str(&l);
+                    s.push_str(&r_str);
+                    Value::String(Rc::from(s))
+                }
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Avoid format! for number + string
+                    let l_str = l.to_string();
+                    let mut s = String::with_capacity(l_str.len() + r.len());
+                    s.push_str(&l_str);
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
+                }
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
