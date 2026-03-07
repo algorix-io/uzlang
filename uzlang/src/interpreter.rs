@@ -130,8 +130,6 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
             let addr_str = format!("{}:{}", host, port);
 
             if let Ok(addrs) = addr_str.to_socket_addrs() {
-                let mut safe_addr = None;
-
                 for addr in addrs {
                     if is_safe_ip(addr.ip()) {
                         if safe_addr.is_none() {
@@ -143,7 +141,6 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
                 }
 
                 if let Some(addr) = safe_addr {
-                    // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
                     return reqwest::blocking::Client::builder()
                         .redirect(reqwest::redirect::Policy::none())
                         .timeout(Duration::from_secs(10))
@@ -319,6 +316,7 @@ impl Interpreter {
                 }
             }
             Expr::Array(elements) => {
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
                 let mut values = Vec::with_capacity(elements.len());
                 for e in elements {
                     values.push(self.evaluate(e));
@@ -347,6 +345,7 @@ impl Interpreter {
                 }
             }
             Expr::Call(name, args) => {
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
                 let mut arg_values = Vec::with_capacity(args.len());
                 for arg in args {
                     arg_values.push(self.evaluate(arg));
@@ -502,6 +501,7 @@ impl Interpreter {
                     let body = Rc::clone(body);
 
                     // Create new scope
+                    // Bolt: Pre-allocate HashMap capacity to avoid reallocation for function scopes
                     let mut scope = HashMap::with_capacity(params.len());
                     for (i, param) in params.iter().enumerate() {
                         if let Some(val) = arg_values.get(i) {
