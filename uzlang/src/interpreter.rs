@@ -129,15 +129,17 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
-            if let Ok(addrs) = addr_str.to_socket_addrs() {
-                for addr in addrs {
-                    if is_safe_ip(addr.ip()) {
-                        if safe_addr.is_none() {
-                            safe_addr = Some(addr);
-                        }
-                    } else {
-                        return None; // If any resolved IP is unsafe, reject
-                    }
+            if let Ok(mut addrs) = addr_str.to_socket_addrs() {
+                // Find the first safe IP
+                if let Some(safe_addr) = addrs.find(|addr| is_safe_ip(addr.ip())) {
+                    // Pin the DNS resolution to this specific safe IP address to prevent TOCTOU/rebinding
+                    let client = reqwest::blocking::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .resolve(host, safe_addr)
+                        .build();
+
+                    return client.ok();
                 }
 
                 if let Some(addr) = safe_addr {
@@ -151,7 +153,6 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
             }
             return None;
         }
-        // If resolution fails, we cannot verify safety, so we block.
         return None;
     }
     None
@@ -427,8 +428,9 @@ impl Interpreter {
                                 }
                             };
 
+                            // Make the request using the secured and pinned client
                             match client.get(&url).send() {
-                                Ok(mut resp) => {
+                                Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp
                                         .by_ref()
@@ -454,19 +456,20 @@ impl Interpreter {
                             let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            let client = match create_safe_client(&url_str) {
+                            let client = match create_safe_client(&url) {
                                 Some(c) => c,
                                 None => {
                                     eprintln!(
                                         "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                        url_str
+                                        url
                                     );
                                     return Value::empty_string();
                                 }
                             };
 
+                            // Make the request using the secured and pinned client
                             match client
-                                .post(&url_str)
+                                .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
                                 .send()
