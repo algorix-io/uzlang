@@ -258,9 +258,6 @@ impl Interpreter {
                         found = true;
                         if let Value::Array(rc_arr) = val {
                             if let Value::Number(idx) = index_val {
-                                // Performance: Since we accessed `val` by mutable reference and didn't
-                                // call get_variable() which clones it, the Rc count remains 1 for unshared arrays.
-                                // Rc::make_mut therefore runs in O(1) time without cloning the entire array!
                                 let elements = Rc::make_mut(rc_arr);
                                 if idx >= 0 && (idx as usize) < elements.len() {
                                     elements[idx as usize] = value_val;
@@ -275,6 +272,9 @@ impl Interpreter {
                         }
                         break;
                     }
+                }
+                if !found {
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
 
                 if !found {
@@ -447,8 +447,9 @@ impl Interpreter {
                                 }
                             };
 
-                            // Use newly created pinned client to prevent SSRF and DNS rebinding
-                            match client
+                            // Use shared client that does not follow redirects for security
+                            match self
+                                .client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
