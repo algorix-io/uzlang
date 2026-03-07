@@ -1,24 +1,24 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    Agar, // agar
-    Toki, // toki (while)
-    Yoz,  // yoz
+    Agar,     // agar
+    Toki,     // toki (while)
+    Yoz,      // yoz
     Takrorla, // takrorla
-    Sora, // so'ra
+    Sora,     // so'ra
     Funksiya, // funksiya
-    Qaytar, // qaytar
-    Uchun, // uchun (for)
-    Ichida, // ichida (in)
-    And,  // &&
-    Or,   // ||
-    Not,  // !
-    LBrace, // {
-    RBrace, // }
-    LParen, // (
-    RParen, // )
+    Qaytar,   // qaytar
+    Uchun,    // uchun (for)
+    Ichida,   // ichida (in)
+    And,      // &&
+    Or,       // ||
+    Not,      // !
+    LBrace,   // {
+    RBrace,   // }
+    LParen,   // (
+    RParen,   // )
     LBracket, // [
     RBracket, // ]
-    Comma,  // ,
+    Comma,    // ,
     Identifier(String),
     Number(i64),
     StringLiteral(String),
@@ -209,14 +209,17 @@ mod tests {
         let input = "takrorla { yoz 1 }";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
-        assert_eq!(tokens, vec![
-            Token::Takrorla,
-            Token::LBrace,
-            Token::Yoz,
-            Token::Number(1),
-            Token::RBrace,
-            Token::EOF
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Takrorla,
+                Token::LBrace,
+                Token::Yoz,
+                Token::Number(1),
+                Token::RBrace,
+                Token::EOF
+            ]
+        );
     }
 
     #[test]
@@ -227,14 +230,17 @@ mod tests {
         }";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
-        assert_eq!(tokens, vec![
-            Token::Takrorla,
-            Token::LBrace,
-            Token::Yoz,
-            Token::Number(1),
-            Token::RBrace,
-            Token::EOF
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Takrorla,
+                Token::LBrace,
+                Token::Yoz,
+                Token::Number(1),
+                Token::RBrace,
+                Token::EOF
+            ]
+        );
     }
 
     #[test]
@@ -242,13 +248,10 @@ mod tests {
         let input = "so'ra && || ! // comment";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
-        assert_eq!(tokens, vec![
-            Token::Sora,
-            Token::And,
-            Token::Or,
-            Token::Not,
-            Token::EOF
-        ]);
+        assert_eq!(
+            tokens,
+            vec![Token::Sora, Token::And, Token::Or, Token::Not, Token::EOF]
+        );
     }
 
     #[test]
@@ -256,13 +259,16 @@ mod tests {
         let input = "!= ! == &&";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
-        assert_eq!(tokens, vec![
-            Token::Operator("!=".to_string()),
-            Token::Not,
-            Token::Operator("==".to_string()),
-            Token::And,
-            Token::EOF
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Operator("!=".to_string()),
+                Token::Not,
+                Token::Operator("==".to_string()),
+                Token::And,
+                Token::EOF
+            ]
+        );
     }
 
     #[test]
@@ -270,22 +276,25 @@ mod tests {
         let input = "funksiya qosh(a, b) { qaytar a + b }";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
-        assert_eq!(tokens, vec![
-            Token::Funksiya,
-            Token::Identifier("qosh".to_string()),
-            Token::LParen,
-            Token::Identifier("a".to_string()),
-            Token::Comma,
-            Token::Identifier("b".to_string()),
-            Token::RParen,
-            Token::LBrace,
-            Token::Qaytar,
-            Token::Identifier("a".to_string()),
-            Token::Operator("+".to_string()),
-            Token::Identifier("b".to_string()),
-            Token::RBrace,
-            Token::EOF
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Funksiya,
+                Token::Identifier("qosh".to_string()),
+                Token::LParen,
+                Token::Identifier("a".to_string()),
+                Token::Comma,
+                Token::Identifier("b".to_string()),
+                Token::RParen,
+                Token::LBrace,
+                Token::Qaytar,
+                Token::Identifier("a".to_string()),
+                Token::Operator("+".to_string()),
+                Token::Identifier("b".to_string()),
+                Token::RBrace,
+                Token::EOF
+            ]
+        );
     }
 
     #[test]
@@ -293,16 +302,19 @@ mod tests {
         let input = "uchun x ichida [1, 2]";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
-        assert_eq!(tokens, vec![
-            Token::Uchun,
-            Token::Identifier("x".to_string()),
-            Token::Ichida,
-            Token::LBracket,
-            Token::Number(1),
-            Token::Comma,
-            Token::Number(2),
-            Token::RBracket,
-            Token::EOF
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Uchun,
+                Token::Identifier("x".to_string()),
+                Token::Ichida,
+                Token::LBracket,
+                Token::Number(1),
+                Token::Comma,
+                Token::Number(2),
+                Token::RBracket,
+                Token::EOF
+            ]
+        );
     }
 }
