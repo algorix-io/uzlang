@@ -129,12 +129,12 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
-            let mut safe_addr = None;
             if let Ok(addrs) = addr_str.to_socket_addrs() {
                 for addr in addrs {
                     if is_safe_ip(addr.ip()) {
-                        safe_addr = Some(addr);
-                        break;
+                        if safe_addr.is_none() {
+                            safe_addr = Some(addr);
+                        }
                     } else {
                         return None; // If any resolved IP is unsafe, reject
                     }
@@ -147,18 +147,6 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
                         .resolve(host, addr) // Pin DNS to the verified IP
                         .build()
                         .ok();
-                }
-            }
-
-            if let Some(addr) = safe_addr {
-                // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
-                if let Ok(client) = reqwest::blocking::Client::builder()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(Duration::from_secs(10))
-                    .resolve(host, addr)
-                    .build()
-                {
-                    return Some(client);
                 }
             }
             return None;
@@ -405,10 +393,17 @@ impl Interpreter {
                     "qosh" => {
                         // qosh(arr, val) -> returns new array
                         if arg_values.len() >= 2 {
-                            if let Value::Array(rc_arr) = &arg_values[0] {
-                                let mut arr = (**rc_arr).clone();
-                                arr.push(arg_values[1].clone());
-                                return Value::Array(Rc::new(arr));
+                            // Bolt: Pop elements to take ownership and potentially decrement Rc count
+                            let val = arg_values.pop().unwrap();
+                            let arr_val = arg_values.pop().unwrap();
+
+                            if let Value::Array(mut rc_arr) = arr_val {
+                                // Performance: Since we popped arr_val from arg_values, if it was the only
+                                // reference to the array (which happens when nesting qosh calls or
+                                // creating literals), Rc::make_mut runs in O(1) without cloning!
+                                let arr = Rc::make_mut(&mut rc_arr);
+                                arr.push(val);
+                                return Value::Array(rc_arr);
                             } else {
                                 eprintln!(
                                     "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
@@ -433,9 +428,10 @@ impl Interpreter {
                             };
 
                             match client.get(&url).send() {
-                                Ok(resp) => {
+                                Ok(mut resp) => {
                                     let mut buffer = String::new();
                                     if resp
+                                        .by_ref()
                                         .take(MAX_RESPONSE_SIZE)
                                         .read_to_string(&mut buffer)
                                         .is_err()
@@ -475,9 +471,10 @@ impl Interpreter {
                                 .body(json_data)
                                 .send()
                             {
-                                Ok(resp) => {
+                                Ok(mut resp) => {
                                     let mut buffer = String::new();
                                     if resp
+                                        .by_ref()
                                         .take(MAX_RESPONSE_SIZE)
                                         .read_to_string(&mut buffer)
                                         .is_err()
