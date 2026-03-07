@@ -1,0 +1,37 @@
+--- interpreter.rs
++++ interpreter.rs
+@@ -482,15 +482,31 @@
+                 "<=" => Value::Bool(l <= r),
+                 _ => Value::Bool(false),
+             },
+             (Value::String(l), Value::String(r)) => match op {
+-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
++                "+" => {
++                    if l.is_empty() { return Value::String(r); }
++                    if r.is_empty() { return Value::String(l); }
++                    let mut new_str = String::with_capacity(l.len() + r.len());
++                    new_str.push_str(&l);
++                    new_str.push_str(&r);
++                    Value::String(Rc::from(new_str))
++                },
+                 "==" => Value::Bool(l == r),
+                 "!=" => Value::Bool(l != r),
+                 _ => Value::Bool(false),
+             },
+             (Value::String(l), Value::Number(r)) => match op {
+-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
++                "+" => {
++                    let r_str = r.to_string();
++                    let mut new_str = String::with_capacity(l.len() + r_str.len());
++                    new_str.push_str(&l);
++                    new_str.push_str(&r_str);
++                    Value::String(Rc::from(new_str))
++                },
+                 _ => Value::Bool(false),
+             },
+             (Value::Number(l), Value::String(r)) => match op {
+-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
++                "+" => {
++                    let l_str = l.to_string();
++                    let mut new_str = String::with_capacity(l_str.len() + r.len());
++                    new_str.push_str(&l_str);
