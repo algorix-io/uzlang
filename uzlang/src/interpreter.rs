@@ -1,5 +1,4 @@
 use crate::parser::{Expr, Stmt};
-use reqwest;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::ToSocketAddrs;
@@ -111,18 +110,22 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
+fn create_safe_client(url_str: &str) -> Result<reqwest::blocking::Client, &'static str> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return None;
+            return Err("Xavfsizlik qoidasi buzildi - faqat HTTP/HTTPS ruxsat etilgan");
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return None;
+                return Err(
+                    "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
+                );
             }
             if host.starts_with("127.") {
-                return None;
+                return Err(
+                    "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
+                );
             }
 
             // Resolve DNS to prevent rebinding/bypasses like localtest.me
@@ -130,36 +133,35 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
             let addr_str = format!("{}:{}", host, port);
 
             if let Ok(addrs) = addr_str.to_socket_addrs() {
-                let mut first_safe_addr = None;
-                let mut all_safe = true;
-
+                let mut safe_addr = None;
                 for addr in addrs {
                     if !is_safe_ip(addr.ip()) {
-                        all_safe = false;
-                        break; // Reject if ANY resolved IP is unsafe
+                        return Err(
+                            "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
+                        );
                     }
-                    if first_safe_addr.is_none() {
-                        first_safe_addr = Some(addr);
+                    if safe_addr.is_none() {
+                        safe_addr = Some(addr);
                     }
                 }
 
-                if all_safe {
-                    if let Some(addr) = first_safe_addr {
-                        // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
-                        return reqwest::blocking::Client::builder()
-                            .redirect(reqwest::redirect::Policy::none())
-                            .timeout(Duration::from_secs(10))
-                            .resolve(host, addr) // Pin DNS to the verified IP
-                            .build()
-                            .ok();
-                    }
+                if let Some(addr) = safe_addr {
+                    // Pin the connection to the verified IP
+                    let client = reqwest::blocking::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .resolve(host, addr)
+                        .build()
+                        .map_err(|_| "Client yaratishda xatolik yuz berdi")?;
+                    return Ok(client);
                 }
             }
-            return None;
+            // If resolution fails or yields no addresses, we block.
+            return Err("URL manzilini aniqlab bo'lmadi");
         }
-        return None;
+        return Err("URL da host nomi yo'q");
     }
-    None
+    Err("Yaroqsiz URL formati")
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -335,18 +337,18 @@ impl Interpreter {
                 if let Value::Array(elements) = target_val {
                     if let Value::Number(idx) = index_val {
                         if idx >= 0 && (idx as usize) < elements.len() {
-                            return elements[idx as usize].clone();
+                            elements[idx as usize].clone()
                         } else {
                             eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
-                            return Value::Number(0);
+                            Value::Number(0)
                         }
                     } else {
                         eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
-                        return Value::Number(0);
+                        Value::Number(0)
                     }
                 } else {
                     eprintln!("Xatolik: Massiv indekslanishi kerak");
-                    return Value::Number(0);
+                    Value::Number(0)
                 }
             }
             Expr::Call(name, args) => {
@@ -398,17 +400,10 @@ impl Interpreter {
                     "qosh" => {
                         // qosh(arr, val) -> returns new array
                         if arg_values.len() >= 2 {
-                            // Bolt: Pop elements to take ownership and potentially decrement Rc count
-                            let val = arg_values.pop().unwrap();
-                            let arr_val = arg_values.pop().unwrap();
-
-                            if let Value::Array(mut rc_arr) = arr_val {
-                                // Performance: Since we popped arr_val from arg_values, if it was the only
-                                // reference to the array (which happens when nesting qosh calls or
-                                // creating literals), Rc::make_mut runs in O(1) without cloning!
-                                let arr = Rc::make_mut(&mut rc_arr);
-                                arr.push(val);
-                                return Value::Array(rc_arr);
+                            if let Value::Array(rc_arr) = &arg_values[0] {
+                                let mut arr = (**rc_arr).clone();
+                                arr.push(arg_values[1].clone());
+                                return Value::Array(Rc::new(arr));
                             } else {
                                 eprintln!(
                                     "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
@@ -421,23 +416,19 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            let client = match create_safe_client(&url) {
-                                Some(c) => c,
-                                None => {
-                                    eprintln!(
-                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                        url
-                                    );
+                            let safe_client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(err_msg) => {
+                                    eprintln!("Xatolik: {}", err_msg);
                                     return Value::empty_string();
                                 }
                             };
 
-                            // Make the request using the secured and pinned client
-                            match client.get(&url).send() {
+                            // Use the securely pinned client for the request
+                            match safe_client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp
-                                        .by_ref()
                                         .take(MAX_RESPONSE_SIZE)
                                         .read_to_string(&mut buffer)
                                         .is_err()
@@ -460,27 +451,24 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            let client = match create_safe_client(&url) {
-                                Some(c) => c,
-                                None => {
-                                    eprintln!(
-                                        "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                        url
-                                    );
+                            let safe_client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(err_msg) => {
+                                    eprintln!("Xatolik: {}", err_msg);
                                     return Value::empty_string();
                                 }
                             };
 
-                            match client
+                            // Use the securely pinned client for the request
+                            match safe_client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
                                 .send()
                             {
-                                Ok(mut resp) => {
+                                Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp
-                                        .by_ref()
                                         .take(MAX_RESPONSE_SIZE)
                                         .read_to_string(&mut buffer)
                                         .is_err()
