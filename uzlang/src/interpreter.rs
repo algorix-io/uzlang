@@ -576,14 +576,13 @@ impl Interpreter {
             },
             (Value::String(l), Value::String(r)) => match op {
                 "+" => {
-                    // Bolt: Avoid formatting and allocating if one string is empty
+                    // Bolt: Optimize string concatenation to avoid format! macro allocation overhead
                     if l.is_empty() {
                         return Value::String(r);
                     }
                     if r.is_empty() {
                         return Value::String(l);
                     }
-                    // Bolt: Pre-allocate String capacity to avoid reallocation
                     let mut s = String::with_capacity(l.len() + r.len());
                     s.push_str(&l);
                     s.push_str(&r);
@@ -595,19 +594,21 @@ impl Interpreter {
             },
             (Value::String(l), Value::Number(r)) => match op {
                 "+" => {
-                    use std::fmt::Write;
-                    let mut s = String::with_capacity(l.len() + 20); // Pre-allocate with enough space for i64
+                    // Bolt: Avoid format! for string + number
+                    let r_str = r.to_string();
+                    let mut s = String::with_capacity(l.len() + r_str.len());
                     s.push_str(&l);
-                    let _ = write!(s, "{}", r); // avoid format!
+                    s.push_str(&r_str);
                     Value::String(Rc::from(s))
                 }
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
                 "+" => {
-                    use std::fmt::Write;
-                    let mut s = String::with_capacity(20 + r.len());
-                    let _ = write!(s, "{}", l); // avoid format!
+                    // Bolt: Avoid format! for number + string
+                    let l_str = l.to_string();
+                    let mut s = String::with_capacity(l_str.len() + r.len());
+                    s.push_str(&l_str);
                     s.push_str(&r);
                     Value::String(Rc::from(s))
                 }
