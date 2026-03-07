@@ -1,0 +1,13 @@
+yoz "Testing internet_yoz SSRF protection..."
+
+yoz "Testing 127.0.0.1 with internet_yoz..."
+javob = internet_yoz("http://127.0.0.1", "{\"test\": 1}")
+yoz javob
+
+yoz "Testing public URL with internet_yoz (should fail but not block if public)..."
+// Since I don't have a real public endpoint to POST to that accepts anything,
+// it will likely return an error from reqwest, but we want to see if it passes create_safe_client.
+javob = internet_yoz("http://google.com", "{}")
+agar javob == "" {
+    yoz "Google POST failed (expected as Google doesn't handle this POST, but shouldn't be security block)"
+}

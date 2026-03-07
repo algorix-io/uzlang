@@ -1,5 +1,4 @@
 use crate::parser::{Expr, Stmt};
-use reqwest;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::ToSocketAddrs;
@@ -46,7 +45,6 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
-    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -112,36 +110,42 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_safe_url(url_str: &str) -> bool {
+fn create_safe_client(url_str: &str) -> Result<(reqwest::blocking::Client, String), &'static str> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return false;
+            return Err("Faqat HTTP/HTTPS ruxsat etilgan");
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
-            if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
+            if host == "localhost" || host == "::1" || host == "[::1]" || host.starts_with("127.") {
+                return Err("Mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan");
             }
-            if host.starts_with("127.") {
-                return false;
-            }
-            // Resolve DNS to prevent rebinding/bypasses like localtest.me
+
+            // Resolve DNS and pick the first valid address to pin
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
-            if let Ok(addrs) = addr_str.to_socket_addrs() {
-                for addr in addrs {
+            if let Ok(mut addrs) = addr_str.to_socket_addrs() {
+                if let Some(addr) = addrs.next() {
+                    // Check if the resolved IP is safe
                     if !is_safe_ip(addr.ip()) {
-                        return false;
+                        return Err("Mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan");
                     }
+
+                    // Pin the resolved IP address to prevent DNS rebinding/TOCTOU
+                    let client = reqwest::blocking::Client::builder()
+                        .resolve(host, addr)
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .build()
+                        .map_err(|_| "Mijoz yaratishda xatolik")?;
+
+                    return Ok((client, url_str.to_string()));
                 }
             }
-            return true;
         }
-        // If resolution fails, we cannot verify safety, so we block.
-        return false;
     }
-    false
+    Err("Noto'g'ri manzil format")
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -151,11 +155,6 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
-            client: reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
         }
     }
 
@@ -248,23 +247,36 @@ impl Interpreter {
             Stmt::AssignIndex(name, index_expr, value_expr) => {
                 let index_val = self.evaluate(index_expr);
                 let value_val = self.evaluate(value_expr);
-                let mut arr_val = self.get_variable(name);
 
-                if let Value::Array(ref mut rc_arr) = arr_val {
-                    if let Value::Number(idx) = index_val {
-                        let elements = Rc::make_mut(rc_arr);
-                        if idx >= 0 && (idx as usize) < elements.len() {
-                            elements[idx as usize] = value_val;
-                            self.set_variable(name, arr_val);
+                let mut found = false;
+                for scope in self.env_stack.iter_mut().rev() {
+                    if let Some(val) = scope.get_mut(name.as_str()) {
+                        found = true;
+                        if let Value::Array(rc_arr) = val {
+                            if let Value::Number(idx) = index_val {
+                                let elements = Rc::make_mut(rc_arr);
+                                if idx >= 0 && (idx as usize) < elements.len() {
+                                    elements[idx as usize] = value_val;
+                                } else {
+                                    eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                                }
+                            } else {
+                                eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                            }
                         } else {
-                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+                            eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                         }
-                    } else {
-                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+                        break;
                     }
-                } else {
-                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
                 }
+                if !found {
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
+                }
+
+                if !found {
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
+                }
+
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -295,7 +307,8 @@ impl Interpreter {
                 }
             }
             Expr::Array(elements) => {
-                let mut values = Vec::new();
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
+                let mut values = Vec::with_capacity(elements.len());
                 for e in elements {
                     values.push(self.evaluate(e));
                 }
@@ -308,22 +321,23 @@ impl Interpreter {
                 if let Value::Array(elements) = target_val {
                     if let Value::Number(idx) = index_val {
                         if idx >= 0 && (idx as usize) < elements.len() {
-                            return elements[idx as usize].clone();
+                            elements[idx as usize].clone()
                         } else {
                             eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
-                            return Value::Number(0);
+                            Value::Number(0)
                         }
                     } else {
                         eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
-                        return Value::Number(0);
+                        Value::Number(0)
                     }
                 } else {
                     eprintln!("Xatolik: Massiv indekslanishi kerak");
-                    return Value::Number(0);
+                    Value::Number(0)
                 }
             }
             Expr::Call(name, args) => {
-                let mut arg_values = Vec::new();
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
+                let mut arg_values = Vec::with_capacity(args.len());
                 for arg in args {
                     arg_values.push(self.evaluate(arg));
                 }
@@ -418,7 +432,7 @@ impl Interpreter {
                     }
                     "internet_yoz" => {
                         if arg_values.len() >= 2 {
-                            let url = arg_values[0].to_string();
+                            let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
                             if !is_safe_url(&url) {
@@ -466,7 +480,8 @@ impl Interpreter {
                     let body = Rc::clone(body);
 
                     // Create new scope
-                    let mut scope = HashMap::new();
+                    // Bolt: Pre-allocate HashMap capacity to avoid reallocation for function scopes
+                    let mut scope = HashMap::with_capacity(params.len());
                     for (i, param) in params.iter().enumerate() {
                         if let Some(val) = arg_values.get(i) {
                             scope.insert(param.clone(), val.clone());

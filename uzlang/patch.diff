@@ -1,0 +1,44 @@
+--- src/interpreter.rs.orig	2024-05-23
++++ src/interpreter.rs	2024-05-23
+@@ -224,19 +224,20 @@
+             Stmt::AssignIndex(name, index_expr, value_expr) => {
+                 let index_val = self.evaluate(index_expr);
+                 let value_val = self.evaluate(value_expr);
+-                let mut arr_val = self.get_variable(name);
+-
+-                if let Value::Array(ref mut rc_arr) = arr_val {
+-                    if let Value::Number(idx) = index_val {
+-                        let elements = Rc::make_mut(rc_arr);
+-                        if idx >= 0 && (idx as usize) < elements.len() {
+-                            elements[idx as usize] = value_val;
+-                            self.set_variable(name, arr_val);
+-                        } else {
+-                            eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
+-                        }
+-                    } else {
+-                        eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
+-                    }
+-                } else {
+-                    eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
+-                }
++                for scope in self.env_stack.iter_mut().rev() {
++                    if let Some(val) = scope.get_mut(name) {
++                        if let Value::Array(ref mut rc_arr) = val {
++                            if let Value::Number(idx) = index_val {
++                                let elements = Rc::make_mut(rc_arr);
++                                if idx >= 0 && (idx as usize) < elements.len() {
++                                    elements[idx as usize] = value_val;
++                                } else {
++                                    eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
++                                }
++                            } else {
++                                eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
++                            }
++                        } else {
++                            eprintln!("Xatolik: O'zgaruvchi massiv emas: {}", name);
++                        }
++                        break;
++                    }
++                }
+                 None
+             }
