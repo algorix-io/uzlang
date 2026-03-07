@@ -110,22 +110,18 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn create_safe_client(url_str: &str) -> Result<reqwest::blocking::Client, &'static str> {
+fn create_safe_client(url_str: &str) -> Result<reqwest::blocking::Client, String> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return Err("Xavfsizlik qoidasi buzildi - faqat HTTP/HTTPS ruxsat etilgan");
+            return Err("Faqat http va https protokollari qo'llab-quvvatlanadi".to_string());
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return Err(
-                    "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
-                );
+                return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
             }
             if host.starts_with("127.") {
-                return Err(
-                    "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
-                );
+                return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
             }
 
             // Resolve DNS to prevent rebinding/bypasses like localtest.me
@@ -136,32 +132,24 @@ fn create_safe_client(url_str: &str) -> Result<reqwest::blocking::Client, &'stat
                 let mut safe_addr = None;
                 for addr in addrs {
                     if !is_safe_ip(addr.ip()) {
-                        return Err(
-                            "Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan",
-                        );
+                        return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
                     }
-                    if safe_addr.is_none() {
-                        safe_addr = Some(addr);
-                    }
-                }
-
-                if let Some(addr) = safe_addr {
-                    // Pin the connection to the verified IP
+                    // Create a client that resolves the host directly to the validated IP,
+                    // preventing TOCTOU DNS rebinding.
                     let client = reqwest::blocking::Client::builder()
+                        .resolve(host, std::net::SocketAddr::new(addr.ip(), port))
                         .redirect(reqwest::redirect::Policy::none())
                         .timeout(Duration::from_secs(10))
-                        .resolve(host, addr)
                         .build()
-                        .map_err(|_| "Client yaratishda xatolik yuz berdi")?;
+                        .map_err(|e| format!("Kliyent yaratishda xatolik: {}", e))?;
                     return Ok(client);
                 }
             }
-            // If resolution fails or yields no addresses, we block.
-            return Err("URL manzilini aniqlab bo'lmadi");
+            return Err("DNS ruxsat etilmadi yoki topilmadi".to_string());
         }
-        return Err("URL da host nomi yo'q");
+        return Err("Xavfsizlik qoidasi buzildi - host topilmadi".to_string());
     }
-    Err("Yaroqsiz URL formati")
+    Err("Noto'g'ri URL formati".to_string())
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -416,16 +404,16 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            let safe_client = match create_safe_client(&url) {
+                            let client = match create_safe_client(&url) {
                                 Ok(c) => c,
-                                Err(err_msg) => {
-                                    eprintln!("Xatolik: {}", err_msg);
+                                Err(e) => {
+                                    eprintln!("Xatolik: {}", e);
                                     return Value::empty_string();
                                 }
                             };
 
-                            // Use the securely pinned client for the request
-                            match safe_client.get(&url).send() {
+                            // Use newly created pinned client to prevent SSRF and DNS rebinding
+                            match client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp
@@ -451,16 +439,16 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            let safe_client = match create_safe_client(&url) {
+                            let client = match create_safe_client(&url) {
                                 Ok(c) => c,
-                                Err(err_msg) => {
-                                    eprintln!("Xatolik: {}", err_msg);
+                                Err(e) => {
+                                    eprintln!("Xatolik: {}", e);
                                     return Value::empty_string();
                                 }
                             };
 
-                            // Use the securely pinned client for the request
-                            match safe_client
+                            // Use newly created pinned client to prevent SSRF and DNS rebinding
+                            match client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
