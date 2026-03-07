@@ -1,0 +1,21 @@
+// Test Copy-On-Write semantics
+
+yoz "Array COW Test"
+a = [1, 2, 3]
+b = a
+
+yoz "a[0] initially: " + a[0]
+yoz "b[0] initially: " + b[0]
+
+yoz "Modifying a[0] = 10"
+a[0] = 10
+
+yoz "a[0] after: " + a[0]
+yoz "b[0] after: " + b[0]
+
+agar a[0] == 10 && b[0] == 1 {
+    yoz "SUCCESS: b did not change when a changed."
+}
+agar b[0] == 10 {
+    yoz "FAILURE: b changed when a changed!"
+}

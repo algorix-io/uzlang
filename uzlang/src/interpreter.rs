@@ -1,5 +1,4 @@
 use crate::parser::{Expr, Stmt};
-use reqwest;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::ToSocketAddrs;
@@ -46,7 +45,6 @@ type FunctionDef = (Rc<Vec<Rc<str>>>, Rc<Vec<Stmt>>);
 pub struct Interpreter {
     env_stack: Vec<HashMap<Rc<str>, Value>>,
     functions: HashMap<String, FunctionDef>,
-    client: reqwest::blocking::Client,
 }
 
 fn is_safe_ip(ip: std::net::IpAddr) -> bool {
@@ -112,36 +110,46 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_safe_url(url_str: &str) -> bool {
+fn create_safe_client(url_str: &str) -> Result<reqwest::blocking::Client, String> {
     if let Ok(url) = reqwest::Url::parse(url_str) {
         if url.scheme() != "http" && url.scheme() != "https" {
-            return false;
+            return Err("Faqat http va https protokollari qo'llab-quvvatlanadi".to_string());
         }
         if let Some(host) = url.host_str() {
             // Defense in depth: Check known bad hosts (string based)
             if host == "localhost" || host == "::1" || host == "[::1]" {
-                return false;
+                return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
             }
             if host.starts_with("127.") {
-                return false;
+                return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
             }
+
             // Resolve DNS to prevent rebinding/bypasses like localtest.me
             let port = url.port_or_known_default().unwrap_or(80);
             let addr_str = format!("{}:{}", host, port);
 
             if let Ok(addrs) = addr_str.to_socket_addrs() {
+                let mut safe_addr = None;
                 for addr in addrs {
                     if !is_safe_ip(addr.ip()) {
-                        return false;
+                        return Err("Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan".to_string());
                     }
+                    // Create a client that resolves the host directly to the validated IP,
+                    // preventing TOCTOU DNS rebinding.
+                    let client = reqwest::blocking::Client::builder()
+                        .resolve(host, std::net::SocketAddr::new(addr.ip(), port))
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .build()
+                        .map_err(|e| format!("Kliyent yaratishda xatolik: {}", e))?;
+                    return Ok(client);
                 }
             }
-            return true;
+            return Err("DNS ruxsat etilmadi yoki topilmadi".to_string());
         }
-        // If resolution fails, we cannot verify safety, so we block.
-        return false;
+        return Err("Xavfsizlik qoidasi buzildi - host topilmadi".to_string());
     }
-    false
+    Err("Noto'g'ri URL formati".to_string())
 }
 
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -151,11 +159,6 @@ impl Interpreter {
         Interpreter {
             env_stack: vec![HashMap::new()],
             functions: HashMap::new(),
-            client: reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap(),
         }
     }
 
@@ -273,6 +276,11 @@ impl Interpreter {
                 if !found {
                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
+
+                if !found {
+                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
+                }
+
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -303,7 +311,8 @@ impl Interpreter {
                 }
             }
             Expr::Array(elements) => {
-                let mut values = Vec::new();
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
+                let mut values = Vec::with_capacity(elements.len());
                 for e in elements {
                     values.push(self.evaluate(e));
                 }
@@ -316,22 +325,23 @@ impl Interpreter {
                 if let Value::Array(elements) = target_val {
                     if let Value::Number(idx) = index_val {
                         if idx >= 0 && (idx as usize) < elements.len() {
-                            return elements[idx as usize].clone();
+                            elements[idx as usize].clone()
                         } else {
                             eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
-                            return Value::Number(0);
+                            Value::Number(0)
                         }
                     } else {
                         eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
-                        return Value::Number(0);
+                        Value::Number(0)
                     }
                 } else {
                     eprintln!("Xatolik: Massiv indekslanishi kerak");
-                    return Value::Number(0);
+                    Value::Number(0)
                 }
             }
             Expr::Call(name, args) => {
-                let mut arg_values = Vec::new();
+                // Bolt: Pre-allocate vector capacity to avoid reallocation
+                let mut arg_values = Vec::with_capacity(args.len());
                 for arg in args {
                     arg_values.push(self.evaluate(arg));
                 }
@@ -394,16 +404,16 @@ impl Interpreter {
                         if let Some(val) = arg_values.first() {
                             let url = val.to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    eprintln!("Xatolik: {}", e);
+                                    return Value::empty_string();
+                                }
+                            };
 
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
+                            // Use newly created pinned client to prevent SSRF and DNS rebinding
+                            match client.get(&url).send() {
                                 Ok(resp) => {
                                     let mut buffer = String::new();
                                     if resp
@@ -429,13 +439,13 @@ impl Interpreter {
                             let url = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
+                            let client = match create_safe_client(&url) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    eprintln!("Xatolik: {}", e);
+                                    return Value::empty_string();
+                                }
+                            };
 
                             // Use shared client that does not follow redirects for security
                             match self
@@ -474,7 +484,8 @@ impl Interpreter {
                     let body = Rc::clone(body);
 
                     // Create new scope
-                    let mut scope = HashMap::new();
+                    // Bolt: Pre-allocate HashMap capacity to avoid reallocation for function scopes
+                    let mut scope = HashMap::with_capacity(params.len());
                     for (i, param) in params.iter().enumerate() {
                         if let Some(val) = arg_values.get(i) {
                             scope.insert(param.clone(), val.clone());
@@ -541,17 +552,43 @@ impl Interpreter {
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Optimize string concatenation to avoid format! macro allocation overhead
+                    if l.is_empty() {
+                        return Value::String(r);
+                    }
+                    if r.is_empty() {
+                        return Value::String(l);
+                    }
+                    let mut s = String::with_capacity(l.len() + r.len());
+                    s.push_str(&l);
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
+                }
                 "==" => Value::Bool(l == r),
                 "!=" => Value::Bool(l != r),
                 _ => Value::Bool(false),
             },
             (Value::String(l), Value::Number(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Avoid format! for string + number
+                    let r_str = r.to_string();
+                    let mut s = String::with_capacity(l.len() + r_str.len());
+                    s.push_str(&l);
+                    s.push_str(&r_str);
+                    Value::String(Rc::from(s))
+                }
                 _ => Value::Bool(false),
             },
             (Value::Number(l), Value::String(r)) => match op {
-                "+" => Value::String(Rc::from(format!("{}{}", l, r))),
+                "+" => {
+                    // Bolt: Avoid format! for number + string
+                    let l_str = l.to_string();
+                    let mut s = String::with_capacity(l_str.len() + r.len());
+                    s.push_str(&l_str);
+                    s.push_str(&r);
+                    Value::String(Rc::from(s))
+                }
                 _ => Value::Bool(false),
             },
             _ => Value::Bool(false),
