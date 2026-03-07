@@ -143,6 +143,7 @@ fn create_safe_client(url_str: &str) -> Option<reqwest::blocking::Client> {
                 }
 
                 if let Some(addr) = safe_addr {
+                    // Pin the connection to the safe IP to prevent TOCTOU SSRF attacks via DNS rebinding
                     return reqwest::blocking::Client::builder()
                         .redirect(reqwest::redirect::Policy::none())
                         .timeout(Duration::from_secs(10))
@@ -428,9 +429,11 @@ impl Interpreter {
                             };
 
                             match client.get(&url).send() {
-                                Ok(resp) => {
+                                Ok(mut resp) => {
                                     let mut buffer = String::new();
-                                    if Read::take(resp, MAX_RESPONSE_SIZE)
+                                    if resp
+                                        .by_ref()
+                                        .take(MAX_RESPONSE_SIZE)
                                         .read_to_string(&mut buffer)
                                         .is_err()
                                     {
@@ -463,16 +466,17 @@ impl Interpreter {
                                 }
                             };
 
-                            // Use shared client that does not follow redirects for security
                             match client
                                 .post(&url_str)
                                 .header("Content-Type", "application/json")
                                 .body(json_data)
                                 .send()
                             {
-                                Ok(resp) => {
+                                Ok(mut resp) => {
                                     let mut buffer = String::new();
-                                    if Read::take(resp, MAX_RESPONSE_SIZE)
+                                    if resp
+                                        .by_ref()
+                                        .take(MAX_RESPONSE_SIZE)
                                         .read_to_string(&mut buffer)
                                         .is_err()
                                     {
