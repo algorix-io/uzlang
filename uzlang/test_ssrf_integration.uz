@@ -1,0 +1,11 @@
+// Localhost test
+yoz("Test 1: Localhost (should fail)")
+yoz(internet_ol("http://localhost:8080"))
+
+// Private IP test
+yoz("Test 2: Private IP (should fail)")
+yoz(internet_ol("http://192.168.1.1"))
+
+// Public IP test (will probably timeout or fail connection, but should pass safety check)
+yoz("Test 3: Public IP (should pass safety, but maybe fail connection)")
+yoz(internet_ol("http://8.8.8.8"))
