@@ -1,0 +1,2 @@
+yoz("Test 4: internet_yoz (POST) Localhost (should fail)")
+yoz(internet_yoz("http://127.0.0.1:8080", "{\"test\": 1}"))
