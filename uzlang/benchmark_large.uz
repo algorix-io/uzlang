@@ -1,0 +1,20 @@
+
+yoz "Setup array..."
+arr = []
+i = 0
+// Create an array of 20,000 elements.
+takrorla i < 20000 {
+  arr = qosh(arr, i)
+  i = i + 1
+}
+yoz "Array size: " + uzunlik(arr)
+
+yoz "Start updates..."
+c = 0
+// 100,000 updates.
+takrorla c < 100000 {
+  arr[500] = c
+  c = c + 1
+}
+
+yoz "Done."
