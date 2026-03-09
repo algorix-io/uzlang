@@ -5,3 +5,7 @@
 ## 2024-05-28 - String concatenation performance
 **Learning:** `format!("{l}{r}")` was used for string concatenation and implicitly caused multiple re-allocations which were slow in tight loops where a large string is built iteratively (like `a = a + "a"`).
 **Action:** Use `String::with_capacity(l.len() + r.len())` followed by `.push_str()` instead of `format!()` macro for predictable string concatenations.
+
+## 2024-06-05 - Amortized O(1) Array Appends
+**Learning:** Cloning entire arrays during `qosh` (append) and `AssignIndex` results in $O(N^2)$ complexity for loop-based array construction. Using `Rc::make_mut` allows for in-place mutation when the reference is unique, enabling $O(1)$ amortized performance.
+**Action:** Always use `Rc::make_mut` for collection updates. Pair this with `into_iter()` in function calls (`Expr::Call`) to transfer ownership of arguments and keep reference counts low.
