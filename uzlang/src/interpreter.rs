@@ -382,48 +382,49 @@ impl Interpreter {
                         return Value::Number(0);
                     }
                     "qosh" => {
-                        // qosh(arr, val) -> returns new array
-                        if arg_values.len() >= 2 {
-                            if let Value::Array(rc_arr) = &arg_values[0] {
-                                let mut arr = (**rc_arr).clone();
-                                arr.push(arg_values[1].clone());
-                                return Value::Array(Rc::new(arr));
-                            } else {
-                                eprintln!(
-                                    "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
-                                );
+                        // Bolt: Optimize qosh(arr, val) to avoid unnecessary cloning.
+                        // By using into_iter() on arg_values and Rc::make_mut on the array,
+                        // we can perform O(1) amortized in-place updates when the array is unshared.
+                        let mut args_iter = arg_values.into_iter();
+                        if let Some(Value::Array(mut rc_arr)) = args_iter.next() {
+                            if let Some(val) = args_iter.next() {
+                                let elements = Rc::make_mut(&mut rc_arr);
+                                elements.push(val);
+                                return Value::Array(rc_arr);
                             }
+                        } else {
+                            eprintln!(
+                                "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
+                            );
                         }
                         return Value::Number(0);
                     }
                     "internet_ol" => {
                         if let Some(val) = arg_values.first() {
-                            let url = val.to_string();
-
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
-                                    {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
+                            let url_str = val.to_string();
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => {
+                                    match client.get(pinned_url).send() {
+                                        Ok(resp) => {
+                                            let mut buffer = String::new();
+                                            if resp
+                                                .take(MAX_RESPONSE_SIZE)
+                                                .read_to_string(&mut buffer)
+                                                .is_err()
+                                            {
+                                                eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                                return Value::empty_string();
+                                            }
+                                            return Value::String(Rc::from(buffer));
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                            return Value::empty_string();
+                                        }
                                     }
-                                    return Value::String(Rc::from(buffer));
                                 }
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!("Xatolik: Xavfsizlik qoidasi buzildi - {}", e);
                                     return Value::empty_string();
                                 }
                             }
@@ -434,37 +435,34 @@ impl Interpreter {
                         if arg_values.len() >= 2 {
                             let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
-
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self
-                                .client
-                                .post(&url)
-                                .header("Content-Type", "application/json")
-                                .body(json_data)
-                                .send()
-                            {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => {
+                                    match client
+                                        .post(pinned_url)
+                                        .header("Content-Type", "application/json")
+                                        .body(json_data)
+                                        .send()
                                     {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
+                                        Ok(resp) => {
+                                            let mut buffer = String::new();
+                                            if resp
+                                                .take(MAX_RESPONSE_SIZE)
+                                                .read_to_string(&mut buffer)
+                                                .is_err()
+                                            {
+                                                eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                                return Value::empty_string();
+                                            }
+                                            return Value::String(Rc::from(buffer));
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                            return Value::empty_string();
+                                        }
                                     }
-                                    return Value::String(Rc::from(buffer));
                                 }
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!("Xatolik: Xavfsizlik qoidasi buzildi - {}", e);
                                     return Value::empty_string();
                                 }
                             }
