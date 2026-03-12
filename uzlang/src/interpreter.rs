@@ -273,10 +273,6 @@ impl Interpreter {
                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
 
-                if !found {
-                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
-                }
-
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -398,32 +394,33 @@ impl Interpreter {
                     }
                     "internet_ol" => {
                         if let Some(val) = arg_values.first() {
-                            let url = val.to_string();
-
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
-                                    {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
+                            let url_str = val.to_string();
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => {
+                                    match client.get(&pinned_url).send() {
+                                        Ok(resp) => {
+                                            let mut buffer = String::new();
+                                            if resp
+                                                .take(MAX_RESPONSE_SIZE)
+                                                .read_to_string(&mut buffer)
+                                                .is_err()
+                                            {
+                                                eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                                return Value::empty_string();
+                                            }
+                                            return Value::String(Rc::from(buffer));
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                            return Value::empty_string();
+                                        }
                                     }
-                                    return Value::String(Rc::from(buffer));
                                 }
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi: {} - {}",
+                                        e, url_str
+                                    );
                                     return Value::empty_string();
                                 }
                             }
@@ -434,37 +431,37 @@ impl Interpreter {
                         if arg_values.len() >= 2 {
                             let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
-
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self
-                                .client
-                                .post(&url)
-                                .header("Content-Type", "application/json")
-                                .body(json_data)
-                                .send()
-                            {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => {
+                                    match client
+                                        .post(&pinned_url)
+                                        .header("Content-Type", "application/json")
+                                        .body(json_data)
+                                        .send()
                                     {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
+                                        Ok(resp) => {
+                                            let mut buffer = String::new();
+                                            if resp
+                                                .take(MAX_RESPONSE_SIZE)
+                                                .read_to_string(&mut buffer)
+                                                .is_err()
+                                            {
+                                                eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                                return Value::empty_string();
+                                            }
+                                            return Value::String(Rc::from(buffer));
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                            return Value::empty_string();
+                                        }
                                     }
-                                    return Value::String(Rc::from(buffer));
                                 }
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi: {} - {}",
+                                        e, url_str
+                                    );
                                     return Value::empty_string();
                                 }
                             }

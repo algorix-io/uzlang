@@ -1,0 +1,2 @@
+yoz "Testing missing variable AssignIndex"
+b[0] = 10
