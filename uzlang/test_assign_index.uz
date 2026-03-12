@@ -1,0 +1,3 @@
+yoz "Testing non-array AssignIndex"
+a = 5
+a[0] = 10

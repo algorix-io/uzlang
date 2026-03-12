@@ -1,0 +1,2 @@
+yoz "Testing private IP block"
+yoz internet_ol("http://127.0.0.1")
