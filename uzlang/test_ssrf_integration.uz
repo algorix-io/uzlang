@@ -1,0 +1,7 @@
+yoz "Testing SSRF protection..."
+yoz "127.0.0.1:"
+yoz internet_ol("http://127.0.0.1")
+yoz "192.168.1.1:"
+yoz internet_ol("http://192.168.1.1")
+yoz "localhost:"
+yoz internet_ol("http://localhost")
