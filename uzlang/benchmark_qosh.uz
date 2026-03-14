@@ -1,0 +1,9 @@
+yoz "Setup array..."
+arr = []
+i = 0
+takrorla i < 10000 {
+  arr = qosh(arr, i)
+  i = i + 1
+}
+yoz "Array size: " + uzunlik(arr)
+yoz "Done."
