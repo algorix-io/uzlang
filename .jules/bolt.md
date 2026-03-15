@@ -5,3 +5,7 @@
 ## 2024-05-28 - String concatenation performance
 **Learning:** `format!("{l}{r}")` was used for string concatenation and implicitly caused multiple re-allocations which were slow in tight loops where a large string is built iteratively (like `a = a + "a"`).
 **Action:** Use `String::with_capacity(l.len() + r.len())` followed by `.push_str()` instead of `format!()` macro for predictable string concatenations.
+
+## 2026-03-15 - Optimize array append and function calls
+**Learning:** Using `Rc::make_mut` together with `into_iter()` on arguments allows O(1) amortized in-place updates for unshared arrays, providing a massive speedup for iterative array building. Similarly, `into_iter()` for function arguments avoids unnecessary `Value` clones.
+**Action:** Always prefer consuming `Vec<Value>` with `into_iter()` and using `Rc::make_mut` for collections to leverage COW optimizations.
