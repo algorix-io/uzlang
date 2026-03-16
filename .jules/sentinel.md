@@ -9,3 +9,8 @@
 **Vulnerability:** The SSRF protection mechanism had a Time-of-Check Time-of-Use (TOCTOU) vulnerability. The `is_safe_url` function validated the DNS resolution to ensure the IP was safe, but then used a shared `reqwest::blocking::Client` with the original URL, triggering a second DNS resolution. This allowed a DNS rebinding attack where the attacker's DNS server returns a safe IP during validation and an internal IP during the fetch.
 **Learning:** Validating a URL and then fetching it natively without pinning the validated IP is inherently vulnerable to DNS Rebinding.
 **Prevention:** Create a new HTTP client pinned specifically to the validated IP using `reqwest::blocking::ClientBuilder::new().resolve(...)`. This ensures the actual request uses the exact IP that was validated, mitigating TOCTOU and SSRF bypasses.
+
+## 2024-06-05 - internet_yoz SSRF protection hardening
+**Vulnerability:** HTTP POST requests in UzLang (`internet_yoz`) were partially bypassing SSRF protections by not correctly using the pinned client and validated URL from the safety helper.
+**Learning:** Security helpers like `create_safe_client` must be consistently applied to ALL networking functions, and their return values (like the pinned URL) must be used directly in the request.
+**Prevention:** Centralize security validation in a single helper and ensure it returns all necessary state (client, pinned URL) to perform the request safely. Fix compilation errors in security-critical paths immediately.
