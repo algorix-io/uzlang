@@ -83,6 +83,21 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
             if octets == [255, 255, 255, 255] {
                 return false;
             }
+            // IETF Protocol Assignments 192.0.0.0/24
+            if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
+                return false;
+            }
+            // Test networks (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
+            if (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+                || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+                || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+            {
+                return false;
+            }
+            // Multicast 224.0.0.0/4
+            if (octets[0] & 0xf0) == 0xe0 {
+                return false;
+            }
             true
         }
         std::net::IpAddr::V6(ipv6) => {
@@ -99,6 +114,14 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
             }
             // Link-local fe80::/10
             if (segments[0] & 0xffc0) == 0xfe80 {
+                return false;
+            }
+            // Multicast ff00::/8
+            if (segments[0] & 0xff00) == 0xff00 {
+                return false;
+            }
+            // Documentation 2001:db8::/32
+            if segments[0] == 0x2001 && segments[1] == 0xdb8 {
                 return false;
             }
             // IPv4-mapped ::ffff:0:0/96
@@ -123,9 +146,8 @@ fn create_safe_client(url_str: &str) -> Result<(reqwest::blocking::Client, Strin
 
             // Resolve DNS and pick the first valid address to pin
             let port = url.port_or_known_default().unwrap_or(80);
-            let addr_str = format!("{}:{}", host, port);
 
-            if let Ok(mut addrs) = addr_str.to_socket_addrs() {
+            if let Ok(mut addrs) = (host, port).to_socket_addrs() {
                 if let Some(addr) = addrs.next() {
                     // Check if the resolved IP is safe
                     if !is_safe_ip(addr.ip()) {
@@ -273,10 +295,6 @@ impl Interpreter {
                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
 
-                if !found {
-                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
-                }
-
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -398,32 +416,30 @@ impl Interpreter {
                     }
                     "internet_ol" => {
                         if let Some(val) = arg_values.first() {
-                            let url = val.to_string();
-
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
-                                    {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
+                            let url_str = val.to_string();
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => {
+                                    match client.get(&pinned_url).send() {
+                                        Ok(resp) => {
+                                            let mut buffer = String::new();
+                                            if resp
+                                                .take(MAX_RESPONSE_SIZE)
+                                                .read_to_string(&mut buffer)
+                                                .is_err()
+                                            {
+                                                eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                                return Value::empty_string();
+                                            }
+                                            return Value::String(Rc::from(buffer));
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                            return Value::empty_string();
+                                        }
                                     }
-                                    return Value::String(Rc::from(buffer));
                                 }
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!("Xatolik: Xavfsizlik qoidasi buzildi: {} - {}", e, url_str);
                                     return Value::empty_string();
                                 }
                             }
@@ -435,36 +451,34 @@ impl Interpreter {
                             let url_str = arg_values[0].to_string();
                             let json_data = arg_values[1].to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self
-                                .client
-                                .post(&url)
-                                .header("Content-Type", "application/json")
-                                .body(json_data)
-                                .send()
-                            {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => {
+                                    match client
+                                        .post(&pinned_url)
+                                        .header("Content-Type", "application/json")
+                                        .body(json_data)
+                                        .send()
                                     {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
-                                        return Value::empty_string();
+                                        Ok(resp) => {
+                                            let mut buffer = String::new();
+                                            if resp
+                                                .take(MAX_RESPONSE_SIZE)
+                                                .read_to_string(&mut buffer)
+                                                .is_err()
+                                            {
+                                                eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                                return Value::empty_string();
+                                            }
+                                            return Value::String(Rc::from(buffer));
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                            return Value::empty_string();
+                                        }
                                     }
-                                    return Value::String(Rc::from(buffer));
                                 }
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!("Xatolik: Xavfsizlik qoidasi buzildi: {} - {}", e, url_str);
                                     return Value::empty_string();
                                 }
                             }
@@ -615,7 +629,9 @@ mod tests {
         assert!(!is_safe_ip("::".parse().unwrap()));
         assert!(!is_safe_ip("fc00::1".parse().unwrap()));
         assert!(!is_safe_ip("fe80::1".parse().unwrap()));
+        assert!(!is_safe_ip("ff02::1".parse().unwrap())); // Multicast
+        assert!(!is_safe_ip("2001:db8::1".parse().unwrap())); // Documentation
         assert!(!is_safe_ip("::ffff:127.0.0.1".parse().unwrap()));
-        assert!(is_safe_ip("2001:db8::1".parse().unwrap()));
+        assert!(is_safe_ip("2606:4700:4700::1111".parse().unwrap())); // Cloudflare DNS
     }
 }
