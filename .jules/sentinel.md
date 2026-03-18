@@ -9,3 +9,8 @@
 **Vulnerability:** The SSRF protection mechanism had a Time-of-Check Time-of-Use (TOCTOU) vulnerability. The `is_safe_url` function validated the DNS resolution to ensure the IP was safe, but then used a shared `reqwest::blocking::Client` with the original URL, triggering a second DNS resolution. This allowed a DNS rebinding attack where the attacker's DNS server returns a safe IP during validation and an internal IP during the fetch.
 **Learning:** Validating a URL and then fetching it natively without pinning the validated IP is inherently vulnerable to DNS Rebinding.
 **Prevention:** Create a new HTTP client pinned specifically to the validated IP using `reqwest::blocking::ClientBuilder::new().resolve(...)`. This ensures the actual request uses the exact IP that was validated, mitigating TOCTOU and SSRF bypasses.
+
+## 2025-05-24 - Robust IPv6 SSRF Protection
+**Vulnerability:** Manual string formatting like `format!("{}:{}", host, port)` for `to_socket_addrs()` can fail or be bypassed with certain IPv6 literal formats (e.g., those already containing colons but missing brackets).
+**Learning:** Using `(host, port).to_socket_addrs()` is the standard and most robust way in Rust to handle DNS resolution, as it correctly parses various host formats including bracketed IPv6 literals.
+**Prevention:** Avoid manual string concatenation for address resolution. Use the `ToSocketAddrs` implementation for tuples of `(str, u16)` to ensure consistent and secure parsing of all host types.
