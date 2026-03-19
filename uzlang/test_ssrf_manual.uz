@@ -1,0 +1,3 @@
+yoz(internet_ol("http://localhost:8080"));
+yoz(internet_ol("http://127.0.0.1:8080"));
+yoz(internet_ol("http://192.168.1.1"));
