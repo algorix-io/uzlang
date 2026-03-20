@@ -1,4 +1,5 @@
 use crate::parser::{Expr, Stmt};
+use reqwest;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::ToSocketAddrs;
@@ -52,58 +53,34 @@ fn is_safe_ip(ip: std::net::IpAddr) -> bool {
         std::net::IpAddr::V4(ipv4) => {
             let octets = ipv4.octets();
             // Loopback 127.0.0.0/8
-            if octets[0] == 127 {
-                return false;
-            }
+            if octets[0] == 127 { return false; }
             // Private 10.0.0.0/8
-            if octets[0] == 10 {
-                return false;
-            }
+            if octets[0] == 10 { return false; }
             // Private 172.16.0.0/12
-            if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-                return false;
-            }
+            if octets[0] == 172 && (16..=31).contains(&octets[1]) { return false; }
             // Private 192.168.0.0/16
-            if octets[0] == 192 && octets[1] == 168 {
-                return false;
-            }
+            if octets[0] == 192 && octets[1] == 168 { return false; }
             // Link-local 169.254.0.0/16
-            if octets[0] == 169 && octets[1] == 254 {
-                return false;
-            }
+            if octets[0] == 169 && octets[1] == 254 { return false; }
             // Current network 0.0.0.0/8
-            if octets[0] == 0 {
-                return false;
-            }
+            if octets[0] == 0 { return false; }
             // CGNAT 100.64.0.0/10
-            if octets[0] == 100 && (64..=127).contains(&octets[1]) {
-                return false;
-            }
+            if octets[0] == 100 && (64..=127).contains(&octets[1]) { return false; }
             // Broadcast 255.255.255.255
-            if octets == [255, 255, 255, 255] {
-                return false;
-            }
+            if octets == [255, 255, 255, 255] { return false; }
             true
-        }
+        },
         std::net::IpAddr::V6(ipv6) => {
-            if ipv6.is_loopback() {
-                return false;
-            }
-            if ipv6.is_unspecified() {
-                return false;
-            }
+            if ipv6.is_loopback() { return false; }
+            if ipv6.is_unspecified() { return false; }
             let segments = ipv6.segments();
             // Unique local fc00::/7
-            if (segments[0] & 0xfe00) == 0xfc00 {
-                return false;
-            }
+            if (segments[0] & 0xfe00) == 0xfc00 { return false; }
             // Link-local fe80::/10
-            if (segments[0] & 0xffc0) == 0xfe80 {
-                return false;
-            }
+            if (segments[0] & 0xffc0) == 0xfe80 { return false; }
             // IPv4-mapped ::ffff:0:0/96
             if let Some(ipv4) = ipv6.to_ipv4() {
-                return is_safe_ip(std::net::IpAddr::V4(ipv4));
+                 return is_safe_ip(std::net::IpAddr::V4(ipv4));
             }
             true
         }
@@ -273,16 +250,14 @@ impl Interpreter {
                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
 
-                if !found {
-                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
-                }
-
                 None
             }
             Stmt::Function(name, params, body) => {
                 let params_rc: Vec<Rc<str>> = params.iter().map(|p| Rc::from(p.as_str())).collect();
-                self.functions
-                    .insert(name.clone(), (Rc::new(params_rc), Rc::new(body.clone())));
+                self.functions.insert(
+                    name.clone(),
+                    (Rc::new(params_rc), Rc::new(body.clone())),
+                );
                 None
             }
             Stmt::Return(expr) => Some(self.evaluate(expr)),
@@ -321,18 +296,18 @@ impl Interpreter {
                 if let Value::Array(elements) = target_val {
                     if let Value::Number(idx) = index_val {
                         if idx >= 0 && (idx as usize) < elements.len() {
-                            elements[idx as usize].clone()
+                            return elements[idx as usize].clone();
                         } else {
                             eprintln!("Xatolik: Indeks chegaradan tashqarida: {}", idx);
-                            Value::Number(0)
+                            return Value::Number(0);
                         }
                     } else {
                         eprintln!("Xatolik: Indeks raqam bo'lishi kerak");
-                        Value::Number(0)
+                        return Value::Number(0);
                     }
                 } else {
                     eprintln!("Xatolik: Massiv indekslanishi kerak");
-                    Value::Number(0)
+                    return Value::Number(0);
                 }
             }
             Expr::Call(name, args) => {
@@ -342,28 +317,33 @@ impl Interpreter {
                     arg_values.push(self.evaluate(arg));
                 }
 
+                let mut arg_iter = arg_values.into_iter();
+
                 // Native functions
                 match name.as_str() {
                     "son" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_iter.next() {
                             match val {
                                 Value::String(s) => {
                                     return Value::Number(s.trim().parse().unwrap_or(0));
                                 }
-                                Value::Number(n) => return Value::Number(*n),
+                                Value::Number(n) => return Value::Number(n),
                                 _ => return Value::Number(0),
                             }
                         }
                         return Value::Number(0);
                     }
                     "matn" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_iter.next() {
+                            if let Value::String(_) = val {
+                                return val;
+                            }
                             return Value::String(Rc::from(val.to_string()));
                         }
                         return Value::empty_string();
                     }
                     "turi" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_iter.next() {
                             match val {
                                 Value::Number(_) => return Value::String(Rc::from("son")),
                                 Value::String(_) => return Value::String(Rc::from("matn")),
@@ -374,7 +354,7 @@ impl Interpreter {
                         return Value::String(Rc::from("noma'lum"));
                     }
                     "uzunlik" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_iter.next() {
                             if let Value::Array(arr) = val {
                                 return Value::Number(arr.len() as i64);
                             }
@@ -383,11 +363,13 @@ impl Interpreter {
                     }
                     "qosh" => {
                         // qosh(arr, val) -> returns new array
-                        if arg_values.len() >= 2 {
-                            if let Value::Array(rc_arr) = &arg_values[0] {
-                                let mut arr = (**rc_arr).clone();
-                                arr.push(arg_values[1].clone());
-                                return Value::Array(Rc::new(arr));
+                        if let Some(arg0) = arg_iter.next() {
+                            if let Value::Array(mut rc_arr) = arg0 {
+                                if let Some(arg1) = arg_iter.next() {
+                                    let arr = Rc::make_mut(&mut rc_arr);
+                                    arr.push(arg1);
+                                    return Value::Array(rc_arr);
+                                }
                             } else {
                                 eprintln!(
                                     "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
@@ -397,33 +379,33 @@ impl Interpreter {
                         return Value::Number(0);
                     }
                     "internet_ol" => {
-                        if let Some(val) = arg_values.first() {
-                            let url = val.to_string();
+                        if let Some(val) = arg_iter.next() {
+                            let url_str = val.to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
-                                    {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                            match create_safe_client(&url_str) {
+                                Ok((client, url)) => match client.get(url).send() {
+                                    Ok(resp) => {
+                                        let mut buffer = String::new();
+                                        if resp
+                                            .take(MAX_RESPONSE_SIZE)
+                                            .read_to_string(&mut buffer)
+                                            .is_err()
+                                        {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                            return Value::empty_string();
+                                        }
+                                        return Value::String(Rc::from(buffer));
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                         return Value::empty_string();
                                     }
-                                    return Value::String(Rc::from(buffer));
-                                }
+                                },
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi: {} - {}",
+                                        e, url_str
+                                    );
                                     return Value::empty_string();
                                 }
                             }
@@ -431,40 +413,39 @@ impl Interpreter {
                         return Value::empty_string();
                     }
                     "internet_yoz" => {
-                        if arg_values.len() >= 2 {
-                            let url_str = arg_values[0].to_string();
-                            let json_data = arg_values[1].to_string();
+                        if let Some(arg0) = arg_iter.next() {
+                            let url_str = arg0.to_string();
+                            let json_data = arg_iter.next().map(|v| v.to_string()).unwrap_or_default();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self
-                                .client
-                                .post(&url)
-                                .header("Content-Type", "application/json")
-                                .body(json_data)
-                                .send()
-                            {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
-                                    {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                            match create_safe_client(&url_str) {
+                                Ok((client, url)) => match client
+                                    .post(url)
+                                    .header("Content-Type", "application/json")
+                                    .body(json_data)
+                                    .send()
+                                {
+                                    Ok(resp) => {
+                                        let mut buffer = String::new();
+                                        if resp
+                                            .take(MAX_RESPONSE_SIZE)
+                                            .read_to_string(&mut buffer)
+                                            .is_err()
+                                        {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                            return Value::empty_string();
+                                        }
+                                        return Value::String(Rc::from(buffer));
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                         return Value::empty_string();
                                     }
-                                    return Value::String(Rc::from(buffer));
-                                }
+                                },
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi: {} - {}",
+                                        e, url_str
+                                    );
                                     return Value::empty_string();
                                 }
                             }
@@ -482,9 +463,9 @@ impl Interpreter {
                     // Create new scope
                     // Bolt: Pre-allocate HashMap capacity to avoid reallocation for function scopes
                     let mut scope = HashMap::with_capacity(params.len());
-                    for (i, param) in params.iter().enumerate() {
-                        if let Some(val) = arg_values.get(i) {
-                            scope.insert(param.clone(), val.clone());
+                    for param in params.iter() {
+                        if let Some(val) = arg_iter.next() {
+                            scope.insert(param.clone(), val);
                         } else {
                             // Default value for missing args?
                             scope.insert(param.clone(), Value::Number(0));
