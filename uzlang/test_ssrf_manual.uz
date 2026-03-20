@@ -1,0 +1,6 @@
+yoz("Testing SSRF with Localhost");
+yoz(internet_ol("http://localhost:8000"));
+yoz("Testing SSRF with 127.0.0.1");
+yoz(internet_ol("http://127.0.0.1:8000"));
+yoz("Testing SSRF with Private IP");
+yoz(internet_ol("http://192.168.1.1"));
