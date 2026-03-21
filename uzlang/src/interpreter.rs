@@ -273,10 +273,6 @@ impl Interpreter {
                     eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
                 }
 
-                if !found {
-                    eprintln!("Xatolik: O'zgaruvchi topilmadi: {}", name);
-                }
-
                 None
             }
             Stmt::Function(name, params, body) => {
@@ -342,28 +338,34 @@ impl Interpreter {
                     arg_values.push(self.evaluate(arg));
                 }
 
+                // Use an iterator for native and user functions to move values
+                let mut arg_values = arg_values.into_iter();
+
                 // Native functions
                 match name.as_str() {
                     "son" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_values.next() {
                             match val {
                                 Value::String(s) => {
                                     return Value::Number(s.trim().parse().unwrap_or(0));
                                 }
-                                Value::Number(n) => return Value::Number(*n),
+                                Value::Number(n) => return Value::Number(n),
                                 _ => return Value::Number(0),
                             }
                         }
                         return Value::Number(0);
                     }
                     "matn" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_values.next() {
+                            if let Value::String(_) = val {
+                                return val;
+                            }
                             return Value::String(Rc::from(val.to_string()));
                         }
                         return Value::empty_string();
                     }
                     "turi" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_values.next() {
                             match val {
                                 Value::Number(_) => return Value::String(Rc::from("son")),
                                 Value::String(_) => return Value::String(Rc::from("matn")),
@@ -374,7 +376,7 @@ impl Interpreter {
                         return Value::String(Rc::from("noma'lum"));
                     }
                     "uzunlik" => {
-                        if let Some(val) = arg_values.first() {
+                        if let Some(val) = arg_values.next() {
                             if let Value::Array(arr) = val {
                                 return Value::Number(arr.len() as i64);
                             }
@@ -383,47 +385,47 @@ impl Interpreter {
                     }
                     "qosh" => {
                         // qosh(arr, val) -> returns new array
-                        if arg_values.len() >= 2 {
-                            if let Value::Array(rc_arr) = &arg_values[0] {
-                                let mut arr = (**rc_arr).clone();
-                                arr.push(arg_values[1].clone());
-                                return Value::Array(Rc::new(arr));
-                            } else {
-                                eprintln!(
-                                    "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
-                                );
+                        if let Some(Value::Array(mut rc_arr)) = arg_values.next() {
+                            if let Some(val) = arg_values.next() {
+                                let elements = Rc::make_mut(&mut rc_arr);
+                                elements.push(val);
+                                return Value::Array(rc_arr);
                             }
+                        } else {
+                            eprintln!(
+                                "Xatolik: 'qosh' funksiyasining birinchi parametri massiv bo'lishi kerak"
+                            );
                         }
                         return Value::Number(0);
                     }
                     "internet_ol" => {
-                        if let Some(val) = arg_values.first() {
-                            let url = val.to_string();
+                        if let Some(val) = arg_values.next() {
+                            let url_str = val.to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self.client.get(&url).send() {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
-                                    {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => match client.get(&pinned_url).send() {
+                                    Ok(resp) => {
+                                        let mut buffer = String::new();
+                                        if resp
+                                            .take(MAX_RESPONSE_SIZE)
+                                            .read_to_string(&mut buffer)
+                                            .is_err()
+                                        {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                            return Value::empty_string();
+                                        }
+                                        return Value::String(Rc::from(buffer));
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                         return Value::empty_string();
                                     }
-                                    return Value::String(Rc::from(buffer));
-                                }
+                                },
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi: {} - {}",
+                                        e, url_str
+                                    );
                                     return Value::empty_string();
                                 }
                             }
@@ -431,40 +433,40 @@ impl Interpreter {
                         return Value::empty_string();
                     }
                     "internet_yoz" => {
-                        if arg_values.len() >= 2 {
-                            let url_str = arg_values[0].to_string();
-                            let json_data = arg_values[1].to_string();
+                        let arg_values_vec: Vec<Value> = arg_values.collect();
+                        if arg_values_vec.len() >= 2 {
+                            let url_str = arg_values_vec[0].to_string();
+                            let json_data = arg_values_vec[1].to_string();
 
-                            if !is_safe_url(&url) {
-                                eprintln!(
-                                    "Xatolik: Xavfsizlik qoidasi buzildi - mahalliy yoki xususiy tarmoqqa ulanish taqiqlangan: {}",
-                                    url
-                                );
-                                return Value::empty_string();
-                            }
-
-                            // Use shared client that does not follow redirects for security
-                            match self
-                                .client
-                                .post(&url)
-                                .header("Content-Type", "application/json")
-                                .body(json_data)
-                                .send()
-                            {
-                                Ok(resp) => {
-                                    let mut buffer = String::new();
-                                    if resp
-                                        .take(MAX_RESPONSE_SIZE)
-                                        .read_to_string(&mut buffer)
-                                        .is_err()
-                                    {
-                                        eprintln!("Xatolik: Javobni o'qishda xatolik");
+                            match create_safe_client(&url_str) {
+                                Ok((client, pinned_url)) => match client
+                                    .post(&pinned_url)
+                                    .header("Content-Type", "application/json")
+                                    .body(json_data)
+                                    .send()
+                                {
+                                    Ok(resp) => {
+                                        let mut buffer = String::new();
+                                        if resp
+                                            .take(MAX_RESPONSE_SIZE)
+                                            .read_to_string(&mut buffer)
+                                            .is_err()
+                                        {
+                                            eprintln!("Xatolik: Javobni o'qishda xatolik");
+                                            return Value::empty_string();
+                                        }
+                                        return Value::String(Rc::from(buffer));
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
                                         return Value::empty_string();
                                     }
-                                    return Value::String(Rc::from(buffer));
-                                }
+                                },
                                 Err(e) => {
-                                    eprintln!("Xatolik: Internet so'rovida xatolik: {}", e);
+                                    eprintln!(
+                                        "Xatolik: Xavfsizlik qoidasi buzildi: {} - {}",
+                                        e, url_str
+                                    );
                                     return Value::empty_string();
                                 }
                             }
@@ -482,9 +484,9 @@ impl Interpreter {
                     // Create new scope
                     // Bolt: Pre-allocate HashMap capacity to avoid reallocation for function scopes
                     let mut scope = HashMap::with_capacity(params.len());
-                    for (i, param) in params.iter().enumerate() {
-                        if let Some(val) = arg_values.get(i) {
-                            scope.insert(param.clone(), val.clone());
+                    for param in params.iter() {
+                        if let Some(val) = arg_values.next() {
+                            scope.insert(param.clone(), val);
                         } else {
                             // Default value for missing args?
                             scope.insert(param.clone(), Value::Number(0));
