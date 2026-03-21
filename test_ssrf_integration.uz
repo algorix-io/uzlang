@@ -1,0 +1,11 @@
+yoz("Test 1: Localhost block check")
+internet_ol("http://localhost:8080")
+
+yoz("Test 2: 127.0.0.1 block check")
+internet_ol("http://127.0.0.1:8080")
+
+yoz("Test 3: Private IP block check")
+internet_ol("http://192.168.1.1")
+
+yoz("Test 4: Safe URL check")
+internet_ol("http://example.com")
