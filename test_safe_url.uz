@@ -1,0 +1,2 @@
+yoz("Test 4: Safe URL check")
+yoz(internet_ol("http://google.com"))
